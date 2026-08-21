@@ -23,35 +23,15 @@ class BackendError(Exception):
 
 # ------------------------------------------------------------------ gmail
 
-_TOKEN = None
-
-
-def _adc_token():
-    """gws stores credentials in the keyring, which is broken on this setup
-    (googleworkspace/cli#361). The established workaround -- see the gws()
-    wrapper in dotfiles/zsh -- is to inject a fresh gcloud application-default
-    token instead. That wrapper is a shell function, so it does not apply to
-    subprocess calls; this reproduces it. Cached per process: a token is good
-    for an hour and a CLI run lasts seconds."""
-    global _TOKEN
-    if _TOKEN is None:
-        try:
-            r = subprocess.run(
-                ["gcloud", "auth", "application-default", "print-access-token"],
-                capture_output=True, text=True, timeout=60,
-            )
-            _TOKEN = r.stdout.strip() if r.returncode == 0 else ""
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            _TOKEN = ""
-    return _TOKEN
-
-
 def _gws(args, timeout=180):
+    # gws reads its own credentials from ~/.config/gws. An explicitly exported
+    # GOOGLE_WORKSPACE_CLI_TOKEN still wins, which is the escape hatch if the
+    # keyring bug (googleworkspace/cli#361, closed in 0.9.x) ever resurfaces --
+    # but we no longer inject one, because an ADC token cannot carry Gmail
+    # scopes: Google blocks gcloud's OAuth client from restricted scopes.
     env = os.environ.copy()
     if not env.get("GOOGLE_WORKSPACE_CLI_TOKEN"):
-        token = _adc_token()
-        if token:
-            env["GOOGLE_WORKSPACE_CLI_TOKEN"] = token
+        env.pop("GOOGLE_WORKSPACE_CLI_TOKEN", None)
     try:
         r = subprocess.run(["gws"] + args, capture_output=True, text=True,
                            timeout=timeout, env=env)

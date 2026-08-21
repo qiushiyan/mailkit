@@ -75,22 +75,35 @@ and 25 MB attachments so this repo does not have to.
 
 ```
 npm i -g @googleworkspace/cli
-brew install --cask google-cloud-sdk
-gcloud auth login
-gcloud auth application-default login --scopes=<gmail scopes>
+# put your own OAuth client at ~/.config/gws/client_secret.json (see below)
+gws auth login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.send
 ```
 
-Auth goes through gcloud application-default credentials, not `gws auth login`:
-`gws` encrypts its own credentials into the OS keyring and that is broken here
-(googleworkspace/cli#361). The workaround already established in
-`dotfiles/zsh/.config/zsh/gws.zsh` injects a fresh ADC access token via
-`GOOGLE_WORKSPACE_CLI_TOKEN` on every call. That wrapper is a shell function, so
-it does not cover subprocess calls -- `backends._adc_token()` reproduces it.
+It has to be a self-owned OAuth client. The obvious shortcut -- gcloud
+application-default credentials, which is what `dotfiles/zsh/.config/zsh/gws.zsh`
+was set up to inject -- cannot work for mail: Gmail's scopes are *restricted*,
+and Google blocks gcloud's own OAuth client from requesting them ("This app is
+blocked"). ADC also forces `cloud-platform` into every scope set, which is
+broader than this tool needs. The injection path is left as an escape hatch
+(an exported `GOOGLE_WORKSPACE_CLI_TOKEN` still wins) but is no longer used.
 
-If the ADC client is refused the Gmail scopes (they are restricted scopes and
-gcloud's own OAuth client may not be permitted to request them), the fallback is
-`gws auth setup` with a self-owned OAuth client, which is what the token
-workaround was avoiding in the first place.
+Creating the client, in the Cloud Console:
+
+1. New project, then **APIs & Services -> Library -> Gmail API -> Enable**
+2. **Google Auth Platform -> Branding**: app name, support email. Audience:
+   **External**
+3. **Audience -> Test users**: add your own address. Testing status plus a
+   listed test user is what lets restricted scopes through without Google's
+   verification review
+4. **Data access -> Add scopes**: `gmail.readonly` and `gmail.send`
+5. **Clients -> Create client -> Desktop app**, download the JSON
+6. Save it as `~/.config/gws/client_secret.json`
+
+While publishing status is Testing, Google revokes the refresh token every 7
+days, so `gws auth login` has to be re-run weekly. Flipping the app to "In
+Production" removes that (unverified apps still work for their own owner behind
+an "unsafe" interstitial); full verification with a security audit is only
+needed to hand the app to other people.
 
 Scope-limit whichever path is used -- `gws auth login`'s default preset asks for
 85+ scopes and fails outright for unverified apps (~25 scope ceiling). What this

@@ -112,30 +112,50 @@ def cmd_fetch(args, backend):
 
 
 def main():
+    # The global flags are repeated on every subcommand: argparse only accepts
+    # them before the subcommand name, and `mail-find search ... --text` is what
+    # anyone (model or human) writes first. SUPPRESS keeps an omitted subcommand
+    # flag from clobbering the value given before the subcommand.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--account", choices=["gmail", "outlook"],
+                        default=argparse.SUPPRESS)
+    common.add_argument("--json", dest="json", action="store_true",
+                        default=argparse.SUPPRESS, help="JSON output (default)")
+    common.add_argument("--text", dest="json", action="store_false",
+                        default=argparse.SUPPRESS,
+                        help="human-readable output instead of JSON")
+
+    # The real defaults live on the top-level parser only. A subparser that also
+    # carried them would copy them back over a value given before the
+    # subcommand name, so the inherited copies stay SUPPRESS.
     p = argparse.ArgumentParser(
         prog="mail-find",
         description="Search, read and download attachments from mail history (read-only).")
-    p.add_argument("--account", default="gmail", choices=["gmail", "outlook"])
+    p.add_argument("--account", choices=["gmail", "outlook"], default="gmail")
     p.add_argument("--json", dest="json", action="store_true", default=True,
                    help="JSON output (default)")
     p.add_argument("--text", dest="json", action="store_false",
                    help="human-readable output instead of JSON")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("search", help="search mail history in the provider's own query syntax")
+    s = sub.add_parser("search", parents=[common],
+                       help="search mail history in the provider's own query syntax")
     s.add_argument("query")
     s.add_argument("--limit", type=int, default=25)
     s.set_defaults(fn=cmd_search)
 
-    r = sub.add_parser("read", help="full message: headers, body, attachment manifest")
+    r = sub.add_parser("read", parents=[common],
+                       help="full message: headers, body, attachment manifest")
     r.add_argument("message_id")
     r.set_defaults(fn=cmd_read)
 
-    a = sub.add_parser("attachments", help="list a message's attachments")
+    a = sub.add_parser("attachments", parents=[common],
+                       help="list a message's attachments")
     a.add_argument("message_id")
     a.set_defaults(fn=cmd_attachments)
 
-    f = sub.add_parser("fetch", help="download attachments to a local directory")
+    f = sub.add_parser("fetch", parents=[common],
+                       help="download attachments to a local directory")
     f.add_argument("message_id")
     f.add_argument("--attachment", action="append", metavar="NAME",
                    help="attachment name or id (repeatable)")

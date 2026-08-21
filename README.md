@@ -75,14 +75,26 @@ and 25 MB attachments so this repo does not have to.
 
 ```
 npm i -g @googleworkspace/cli
-brew install --cask google-cloud-sdk     # gws auth setup drives gcloud
+brew install --cask google-cloud-sdk
 gcloud auth login
-gws auth setup                            # creates the GCP project + OAuth client
-gws auth login -s gmail                   # scope-limited: gmail only, not all 85+
+gcloud auth application-default login --scopes=<gmail scopes>
 ```
 
-`gws auth login -s gmail` matters. The default scope preset asks for 85+ scopes
-and fails outright for unverified apps (~25 scope ceiling).
+Auth goes through gcloud application-default credentials, not `gws auth login`:
+`gws` encrypts its own credentials into the OS keyring and that is broken here
+(googleworkspace/cli#361). The workaround already established in
+`dotfiles/zsh/.config/zsh/gws.zsh` injects a fresh ADC access token via
+`GOOGLE_WORKSPACE_CLI_TOKEN` on every call. That wrapper is a shell function, so
+it does not cover subprocess calls -- `backends._adc_token()` reproduces it.
+
+If the ADC client is refused the Gmail scopes (they are restricted scopes and
+gcloud's own OAuth client may not be permitted to request them), the fallback is
+`gws auth setup` with a self-owned OAuth client, which is what the token
+workaround was avoiding in the first place.
+
+Scope-limit whichever path is used -- `gws auth login`'s default preset asks for
+85+ scopes and fails outright for unverified apps (~25 scope ceiling). What this
+tool needs is only `gmail.readonly` (mail-find) and `gmail.send` (send-mail).
 
 The alternative -- an app password over SMTP/IMAP -- still works on Gmail in
 2026 (unlike Outlook, where Microsoft killed Basic Auth for SMTP AUTH in spring

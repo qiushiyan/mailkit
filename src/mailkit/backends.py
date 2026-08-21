@@ -11,6 +11,7 @@ up yet -- see README.
 
 import base64
 import json
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,10 +23,38 @@ class BackendError(Exception):
 
 # ------------------------------------------------------------------ gmail
 
+_TOKEN = None
+
+
+def _adc_token():
+    """gws stores credentials in the keyring, which is broken on this setup
+    (googleworkspace/cli#361). The established workaround -- see the gws()
+    wrapper in dotfiles/zsh -- is to inject a fresh gcloud application-default
+    token instead. That wrapper is a shell function, so it does not apply to
+    subprocess calls; this reproduces it. Cached per process: a token is good
+    for an hour and a CLI run lasts seconds."""
+    global _TOKEN
+    if _TOKEN is None:
+        try:
+            r = subprocess.run(
+                ["gcloud", "auth", "application-default", "print-access-token"],
+                capture_output=True, text=True, timeout=60,
+            )
+            _TOKEN = r.stdout.strip() if r.returncode == 0 else ""
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            _TOKEN = ""
+    return _TOKEN
+
 
 def _gws(args, timeout=180):
+    env = os.environ.copy()
+    if not env.get("GOOGLE_WORKSPACE_CLI_TOKEN"):
+        token = _adc_token()
+        if token:
+            env["GOOGLE_WORKSPACE_CLI_TOKEN"] = token
     try:
-        r = subprocess.run(["gws"] + args, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["gws"] + args, capture_output=True, text=True,
+                           timeout=timeout, env=env)
     except FileNotFoundError:
         raise BackendError("`gws` not found -- npm i -g @googleworkspace/cli")
     except subprocess.TimeoutExpired:
@@ -76,18 +105,13 @@ class GmailBackend:
     _account_cache = None
 
     def account(self):
-        """The address gws is authenticated as, or None if logged out."""
+        """The address gws is authenticated as, or None if not usable.
+
+        Asking Gmail who we are doubles as proof the token actually works,
+        which `gws auth status` cannot tell us under token injection.
+        """
         if self._account_cache is not None:
             return self._account_cache or None
-        try:
-            status = _gws_json(["auth", "status"]) or {}
-        except BackendError:
-            return None
-        # `auth status` reports storage but not identity, so ask Gmail who we
-        # are -- and that doubles as proof the token actually works.
-        if status.get("auth_method") in (None, "none"):
-            self._account_cache = ""
-            return None
         try:
             profile = _gws_json(["gmail", "users", "getProfile"] + _params(userId="me")) or {}
         except BackendError:

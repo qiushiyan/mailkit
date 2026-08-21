@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""send-mail -- compose mail as an agent, send only what a human previewed.
+
+    send-mail --to a@b.com --subject "Hi" --body-file note.md --attach f.pdf
+    send-mail --commit 20260817-143000-hi
+    send-mail --list
+
+Composing is the default and is always a dry run: it writes a draft, renders an
+HTML preview, opens it, and prints the one command that sends it. --commit takes
+that draft id, so what goes out is what was reviewed. See src/mailkit/drafts.py
+for the guarantees behind that.
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mailkit import drafts, preview  # noqa: E402
+from mailkit.backends import BackendError, get_backend  # noqa: E402
+from mailkit.drafts import DraftError, human_size  # noqa: E402
+
+
+def die(msg):
+    print(f"send-mail: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_body(args):
+    if args.body_file:
+        if args.body_file == "-":
+            return sys.stdin.read()
+        p = Path(args.body_file).expanduser()
+        if not p.is_file():
+            die(f"body file not found: {p}")
+        return p.read_text()
+    if args.body is not None:
+        return args.body
+    die("give a body with --body or --body-file (use - for stdin)")
+
+
+def compose(args):
+    backend = get_backend(args.account)
+
+    total = 0
+    for raw in args.attach:
+        p = Path(raw).expanduser()
+        if p.is_file():
+            total += p.stat().st_size
+    if total > backend.attachment_limit:
+        die(f"attachments total {human_size(total)}, over the "
+            f"{human_size(backend.attachment_limit)} limit for {args.account}; "
+            "send a share link instead")
+
+    draft = drafts.create(
+        account=args.account,
+        backend_account=backend.account(),
+        to=args.to, cc=args.cc, bcc=args.bcc,
+        subject=args.subject,
+        body=read_body(args),
+        body_type="HTML" if args.html else "Text",
+        attachments=args.attach,
+        sender_override=args.sender,
+    )
+
+    page = drafts.preview_path(draft["id"])
+    page.write_text(preview.render(draft))
+    if not args.no_open:
+        subprocess.run(["open", str(page)], check=False)
+
+    print(f"draft   {draft['id']}")
+    print(f"account {draft['account']} ({draft['from'] or 'NOT LOGGED IN'})")
+    print(f"preview {page}")
+    if not draft["from"]:
+        print(f"warning: not authenticated for {args.account} -- the send will be refused")
+    print("\nnothing has been sent. to send exactly this draft:")
+    print(f"    send-mail --commit {draft['id']}")
+
+
+def commit(draft_id):
+    draft = drafts.load(draft_id)
+    drafts.verify_sendable(draft)
+
+    backend = get_backend(draft["account"])
+    account = backend.account()
+    if not account:
+        die(f"not authenticated for {draft['account']} -- see README")
+
+    backend.send(draft)
+    drafts.mark_sent(draft, account)
+    print(f"sent as {account} -> {', '.join(draft['to'])}")
+    print(f"subject: {draft['subject']}")
+
+
+def list_drafts():
+    rows = drafts.recent()
+    if not rows:
+        print("no drafts")
+        return
+    for d in rows:
+        state = f"sent {d['sent_at']}" if d.get("sent_at") else "pending"
+        print(f"{d['id']:<52} {d.get('account','?'):<8} {state:<26} -> {', '.join(d['to'])}")
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="send-mail",
+        description="Compose a mail draft (dry run + HTML preview); send only with --commit.")
+    p.add_argument("--commit", metavar="DRAFT_ID", help="send a previously previewed draft")
+    p.add_argument("--list", action="store_true", help="list recent drafts")
+    p.add_argument("--account", default="gmail", choices=["gmail", "outlook"])
+    p.add_argument("-t", "--to", help="comma-separated recipients")
+    p.add_argument("--cc")
+    p.add_argument("--bcc")
+    p.add_argument("-s", "--subject")
+    p.add_argument("--body", help="body text inline")
+    p.add_argument("--body-file", help="read body from a file, or - for stdin")
+    p.add_argument("--attach", action="append", default=[], metavar="PATH",
+                   help="attach a file (repeatable)")
+    p.add_argument("--html", action="store_true", help="body is HTML, not plain text")
+    p.add_argument("--sender", help="send as an alias / send-as address")
+    p.add_argument("--no-open", action="store_true", help="do not open the preview")
+    args = p.parse_args()
+
+    try:
+        if args.list:
+            list_drafts()
+        elif args.commit:
+            commit(args.commit)
+        else:
+            if not args.subject:
+                die("--subject is required")
+            compose(args)
+    except (DraftError, BackendError) as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    main()

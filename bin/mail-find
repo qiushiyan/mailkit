@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""mail-find -- read-only access to mail history, for an agent to consume.
+
+    mail-find search "from:alice has:attachment newer_than:30d"
+    mail-find read <message-id>
+    mail-find attachments <message-id>
+    mail-find fetch <message-id> --all
+
+Read and send are separate commands on purpose: wanting an agent to look
+something up in my mail should not also hand it the ability to send as me.
+Output is JSON by default so the model gets structure, not scraped text.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from mailkit.backends import BackendError, get_backend  # noqa: E402
+from mailkit.drafts import human_size  # noqa: E402
+
+# Downloads land here rather than the cwd: attachments are someone else's bytes
+# and should not silently litter whatever directory an agent happens to be in.
+ATTACHMENT_DIR = Path.home() / ".local/state/mailkit/attachments"
+
+
+def die(msg):
+    print(f"mail-find: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def emit(obj, as_json=True):
+    if as_json:
+        print(json.dumps(obj, indent=2, ensure_ascii=False))
+    return obj
+
+
+def cmd_search(args, backend):
+    hits = backend.search(args.query, limit=args.limit)
+    if args.json:
+        return emit(hits)
+    if not hits:
+        print("no matches")
+        return
+    for h in hits:
+        print(f"{h['id']}  {h.get('date') or '':<32}")
+        print(f"  from: {h.get('from')}")
+        print(f"  subj: {h.get('subject')}")
+        if h.get("snippet"):
+            print(f"  {h['snippet'][:120]}")
+        print()
+
+
+def cmd_read(args, backend):
+    msg = backend.message(args.message_id)
+    if args.json:
+        return emit(msg)
+    for field in ("date", "from", "to", "cc", "subject"):
+        if msg.get(field):
+            print(f"{field.capitalize():<9} {msg[field]}")
+    if msg["attachments"]:
+        names = ", ".join(f"{a['name']} ({human_size(a['size'])})" for a in msg["attachments"])
+        print(f"{'Attach':<9} {names}")
+    print()
+    print(msg["body"])
+
+
+def cmd_attachments(args, backend):
+    atts = backend.attachments(args.message_id)
+    if args.json:
+        return emit(atts)
+    if not atts:
+        print("no attachments")
+        return
+    for a in atts:
+        print(f"{a['name']}  {human_size(a['size'])}  {a['mime_type']}")
+
+
+def cmd_fetch(args, backend):
+    atts = backend.attachments(args.message_id)
+    if not atts:
+        die(f"message {args.message_id} has no attachments")
+
+    if args.all:
+        wanted = atts
+    elif args.attachment:
+        wanted = []
+        for token in args.attachment:
+            match = [a for a in atts if token in (a["name"], a["id"])]
+            if not match:
+                available = ", ".join(a["name"] for a in atts)
+                die(f"no attachment {token!r} on that message; has: {available}")
+            wanted.extend(match)
+    else:
+        die("pick attachments with --attachment NAME (repeatable) or --all")
+
+    out_dir = Path(args.out).expanduser() if args.out else ATTACHMENT_DIR / args.message_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    for a in wanted:
+        dest = out_dir / a["name"]
+        size = backend.fetch_attachment(args.message_id, a["id"], dest)
+        saved.append({"name": a["name"], "path": str(dest), "size": size})
+
+    if args.json:
+        return emit(saved)
+    for s in saved:
+        print(f"{s['path']}  ({human_size(s['size'])})")
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="mail-find",
+        description="Search, read and download attachments from mail history (read-only).")
+    p.add_argument("--account", default="gmail", choices=["gmail", "outlook"])
+    p.add_argument("--json", dest="json", action="store_true", default=True,
+                   help="JSON output (default)")
+    p.add_argument("--text", dest="json", action="store_false",
+                   help="human-readable output instead of JSON")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("search", help="search mail history in the provider's own query syntax")
+    s.add_argument("query")
+    s.add_argument("--limit", type=int, default=25)
+    s.set_defaults(fn=cmd_search)
+
+    r = sub.add_parser("read", help="full message: headers, body, attachment manifest")
+    r.add_argument("message_id")
+    r.set_defaults(fn=cmd_read)
+
+    a = sub.add_parser("attachments", help="list a message's attachments")
+    a.add_argument("message_id")
+    a.set_defaults(fn=cmd_attachments)
+
+    f = sub.add_parser("fetch", help="download attachments to a local directory")
+    f.add_argument("message_id")
+    f.add_argument("--attachment", action="append", metavar="NAME",
+                   help="attachment name or id (repeatable)")
+    f.add_argument("--all", action="store_true", help="download every attachment")
+    f.add_argument("--out", metavar="DIR", help="destination directory")
+    f.set_defaults(fn=cmd_fetch)
+
+    args = p.parse_args()
+    try:
+        backend = get_backend(args.account)
+        if not backend.account():
+            die(f"not authenticated for {args.account} -- see README")
+        args.fn(args, backend)
+    except BackendError as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    main()

@@ -13,7 +13,7 @@ something up in my mail should not also hand it the ability to send as me.
 
 ```
 mail-find search "from:alice has:attachment newer_than:30d"
-mail-find read <message-id>
+mail-find read <message-id> [--fetch-remote]
 mail-find attachments <message-id>
 mail-find fetch <message-id> --attachment report.pdf --attachment data.csv
 
@@ -29,7 +29,37 @@ syntax -- for Gmail that is the search box syntax, `has:attachment`,
 
 Attachments download to `~/.local/state/mailkit/attachments/<message-id>/`
 rather than the cwd, so an agent cannot litter whatever directory it happens
-to be standing in.
+to be standing in. Filenames are sanitised: an attachment named
+`../../../etc/passwd` lands as `etc-passwd`.
+
+### Getting all of a message, not just its text
+
+Two kinds of picture hide from a naive reader, and both turned out to matter:
+
+- **Inline images.** A part is an attachment if it has an `attachmentId`, not
+  if it has a filename -- images embedded by `Content-ID` often have no
+  filename, and keying on filename silently dropped them. They are now listed,
+  flagged `inline`, and named after their Content-ID.
+- **Remote images.** Most HTML mail references pictures by URL instead of
+  attaching them, so the interesting one -- a screenshot someone sent you --
+  arrives as a bare link that a text-only reader will not follow.
+  `read --fetch-remote` downloads them all into `<message-id>/remote/`.
+
+Fetching a remote image tells the sender the mail was opened. That is inherent
+to remote images and accepted here: the information in the picture is the point.
+
+Downloaded images are labelled by size rather than filtered, so nothing is
+silently withheld:
+
+| label | rule | typically |
+|---|---|---|
+| `pixel` | either edge <= 2px | tracking beacons |
+| `small` | min edge < 100px or area < 40000px | wordmarks, avatars, store badges |
+| *(none)* | everything else | the picture actually worth reading |
+
+Both tests are needed: a wordmark is wide but short (319x43) and an avatar is
+square but tiny (108x108). In a typical marketing mail this leaves exactly one
+unlabelled image out of six.
 
 ## The approval gate
 

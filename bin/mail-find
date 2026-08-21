@@ -54,15 +54,33 @@ def cmd_search(args, backend):
 
 
 def cmd_read(args, backend):
-    msg = backend.message(args.message_id)
+    want_remote = getattr(args, "fetch_remote", False)
+    msg = backend.message(args.message_id, include_remote=want_remote)
+
+    if want_remote:
+        out_dir = Path(args.out).expanduser() if getattr(args, "out", None) \
+            else ATTACHMENT_DIR / args.message_id / "remote"
+        msg["remote_images"] = [
+            backend.fetch_remote(url, out_dir) for url in msg.pop("remote_image_urls", [])
+        ]
+
     if args.json:
         return emit(msg)
+
     for field in ("date", "from", "to", "cc", "subject"):
         if msg.get(field):
             print(f"{field.capitalize():<9} {msg[field]}")
     if msg["attachments"]:
-        names = ", ".join(f"{a['name']} ({human_size(a['size'])})" for a in msg["attachments"])
-        print(f"{'Attach':<9} {names}")
+        for a in msg["attachments"]:
+            tag = " [inline]" if a.get("inline") else ""
+            print(f"{'Attach':<9} {a['name']} ({human_size(a['size'])}){tag}")
+    for img in msg.get("remote_images", []):
+        if img.get("error"):
+            print(f"{'Remote':<9} {img['url'][:70]} -- FAILED: {img['error']}")
+            continue
+        dims = f"{img['width']}x{img['height']}" if img.get("width") else "?"
+        note = "" if img["kind"] == "image" else f"  <- {img['kind']}"
+        print(f"{'Remote':<9} {img['path']}  {dims}{note}")
     print()
     print(msg["body"])
 
@@ -75,7 +93,8 @@ def cmd_attachments(args, backend):
         print("no attachments")
         return
     for a in atts:
-        print(f"{a['name']}  {human_size(a['size'])}  {a['mime_type']}")
+        tag = "  [inline]" if a.get("inline") else ""
+        print(f"{a['name']}  {human_size(a['size'])}  {a['mime_type']}{tag}")
 
 
 def cmd_fetch(args, backend):
@@ -147,6 +166,11 @@ def main():
     r = sub.add_parser("read", parents=[common],
                        help="full message: headers, body, attachment manifest")
     r.add_argument("message_id")
+    r.add_argument("--fetch-remote", action="store_true",
+                   help="also download images the body only links to. Doing so "
+                        "tells the sender the mail was opened; the payoff is that "
+                        "a screenshot someone sent you stops being an unread URL")
+    r.add_argument("--out", metavar="DIR", help="destination for downloaded images")
     r.set_defaults(fn=cmd_read)
 
     a = sub.add_parser("attachments", parents=[common],

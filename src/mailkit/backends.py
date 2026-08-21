@@ -12,7 +12,9 @@ up yet -- see README.
 import base64
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -23,7 +25,7 @@ class BackendError(Exception):
 
 # ------------------------------------------------------------------ gmail
 
-def _gws(args, timeout=180):
+def _gws(args, timeout=180, cwd=None):
     # gws reads its own credentials from ~/.config/gws. An explicitly exported
     # GOOGLE_WORKSPACE_CLI_TOKEN still wins, which is the escape hatch if the
     # keyring bug (googleworkspace/cli#361, closed in 0.9.x) ever resurfaces --
@@ -34,7 +36,7 @@ def _gws(args, timeout=180):
         env.pop("GOOGLE_WORKSPACE_CLI_TOKEN", None)
     try:
         r = subprocess.run(["gws"] + args, capture_output=True, text=True,
-                           timeout=timeout, env=env)
+                           timeout=timeout, env=env, cwd=cwd)
     except FileNotFoundError:
         raise BackendError("`gws` not found -- npm i -g @googleworkspace/cli")
     except subprocess.TimeoutExpired:
@@ -212,9 +214,23 @@ class GmailBackend:
             cmd += ["--html"]
         if draft.get("sender_override"):
             cmd += ["--from", draft["sender_override"]]
-        for att in draft.get("attachments") or []:
-            cmd += ["-a", att["path"]]
-        return _gws(cmd).strip()
+
+        attachments = draft.get("attachments") or []
+        if not attachments:
+            return _gws(cmd).strip()
+
+        # gws refuses any -a path that resolves outside the working directory.
+        # Drafts hold absolute paths (they have to: the sha256 pin is checked
+        # against the real file), so stage copies under one temp root and run
+        # from there. Each file gets its own numbered subdirectory so two
+        # attachments sharing a basename cannot collide.
+        with tempfile.TemporaryDirectory(prefix="mailkit-send-") as staging:
+            for i, att in enumerate(attachments):
+                sub = Path(staging) / str(i)
+                sub.mkdir()
+                shutil.copy2(att["path"], sub / att["name"])
+                cmd += ["-a", f"{i}/{att['name']}"]
+            return _gws(cmd, cwd=staging).strip()
 
 
 # ---------------------------------------------------------------- outlook

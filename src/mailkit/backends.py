@@ -298,6 +298,20 @@ class GmailBackend:
         urls = [u for u in IMG_SRC_RE.findall(html) if u.lower().startswith("http")]
         return list(dict.fromkeys(urls))
 
+    def fetch_attachment(self, msg_id, attachment_id, dest: Path):
+        data = _gws_json(
+            ["gmail", "users", "messages", "attachments", "get"]
+            + _params(userId="me", messageId=msg_id, id=attachment_id)
+        )
+        raw = (data or {}).get("data")
+        if not raw:
+            raise BackendError(f"attachment {attachment_id} returned no data")
+        # Gmail uses base64url without padding.
+        blob = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(blob)
+        return len(blob)
+
     def fetch_remote(self, url, out_dir: Path):
         """Download one remote image. Fetching it tells the sender the mail was
         opened -- that is inherent to remote images, and accepted here; the

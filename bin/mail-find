@@ -85,6 +85,52 @@ def cmd_read(args, backend):
     print(msg["body"])
 
 
+def cmd_thread(args, backend):
+    msg = backend.message(args.message_id)
+    msgs = backend.thread(msg["thread_id"])
+    if args.json:
+        return emit(msgs)
+    for m in msgs:
+        marker = ">" if m["id"] == args.message_id else " "
+        print(f"{marker} {m['id']}  {m.get('date') or ''}")
+        print(f"    from: {m.get('from')}")
+        print(f"    subj: {m.get('subject')}")
+        if m["attachments"]:
+            print(f"    att : {', '.join(a['name'] for a in m['attachments'])}")
+        print()
+
+
+def cmd_context(args, backend):
+    from mailkit import context
+    result = context.build(backend, args.message_id, window_days=args.window,
+                           limit=args.limit, min_score=args.min_score)
+    if args.json:
+        return emit(result)
+
+    s = result["seed"]
+    print(f"seed  {s['id']}  {s.get('date') or ''}")
+    print(f"      {s.get('subject')}")
+    sig = result["signals"]
+    print(f"signals  identifiers={sig['identifiers'] or '-'}  "
+          f"domain={sig['domain'] or '-'}  tokens={sig['subject_tokens'] or '-'}")
+    for d in result["dropped_as_too_common"]:
+        print(f"dropped  {d['reason']} -- {d['hits']} hits, not distinctive")
+    if result["below_min_score"]:
+        print(f"held back  {result['below_min_score']} weaker match(es); "
+              f"--min-score 1 to see them")
+    print()
+    if not result["related"]:
+        print("nothing related found")
+        return
+    for r in result["related"]:
+        print(f"[{r['score']:>2}] {r['id']}  {r.get('date') or ''}")
+        print(f"     {(r.get('subject') or '')[:70]}")
+        print(f"     from: {r.get('from')}")
+        for w in r["why"]:
+            print(f"     why : {w}")
+        print()
+
+
 def cmd_attachments(args, backend):
     atts = backend.attachments(args.message_id)
     if args.json:
@@ -172,6 +218,23 @@ def main():
                         "a screenshot someone sent you stops being an unread URL")
     r.add_argument("--out", metavar="DIR", help="destination for downloaded images")
     r.set_defaults(fn=cmd_read)
+
+    t = sub.add_parser("thread", parents=[common],
+                       help="every message Gmail grouped with this one (exact)")
+    t.add_argument("message_id")
+    t.set_defaults(fn=cmd_thread)
+
+    c = sub.add_parser("context", parents=[common],
+                       help="messages about the same real-world thing, across "
+                            "threads and senders (heuristic; each hit says why)")
+    c.add_argument("message_id")
+    c.add_argument("--window", type=int, default=30,
+                   help="days either side of the seed for the weak signals")
+    c.add_argument("--limit", type=int, default=40)
+    c.add_argument("--min-score", type=int, default=2,
+                   help="drop hits below this confidence (1 admits matches "
+                        "resting on a single weak signal)")
+    c.set_defaults(fn=cmd_context)
 
     a = sub.add_parser("attachments", parents=[common],
                        help="list a message's attachments")

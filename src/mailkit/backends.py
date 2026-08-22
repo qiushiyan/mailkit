@@ -207,6 +207,50 @@ class GmailBackend:
             "labels": msg.get("labelIds"),
         }
 
+    def thread(self, thread_id):
+        """Every message Gmail itself grouped, in one call.
+
+        Exact where it applies -- but Gmail only groups by reply chain plus a
+        subject/time heuristic, so a run of notifications about one real-world
+        event usually lands in several threads. See context.py for the layer
+        that spans them.
+        """
+        data = _gws_json(
+            ["gmail", "users", "threads", "get"]
+            + _params(userId="me", id=thread_id, format="full")
+        )
+        if not data:
+            raise BackendError(f"no such thread: {thread_id}")
+        out = []
+        for msg in data.get("messages") or []:
+            h = _headers(msg)
+            out.append({
+                "id": msg.get("id"),
+                "date": h.get("date"),
+                "from": h.get("from"),
+                "to": h.get("to"),
+                "subject": h.get("subject"),
+                "snippet": msg.get("snippet"),
+                "attachments": self.attachments(msg.get("id"), _msg=msg),
+            })
+        return out
+
+    # --- query builders -------------------------------------------------
+    # Kept on the backend because the syntax is the provider's, while the
+    # clustering that uses them is not.
+
+    @staticmethod
+    def q_exact(text):
+        return f'"{text}"'
+
+    @staticmethod
+    def q_from_domain_between(domain, start, end):
+        return f"from:{domain} after:{start:%Y/%m/%d} before:{end:%Y/%m/%d}"
+
+    @staticmethod
+    def q_subject_tokens(tokens):
+        return "subject:(" + " OR ".join(tokens) + ")"
+
     def message(self, msg_id, include_remote=False):
         """Full message: headers, plain-text body, attachment manifest.
 
@@ -397,7 +441,8 @@ class OutlookBackend:
         )
 
     account = search = message = attachments = fetch_attachment = send = _blocked
-    html_body = remote_images = fetch_remote = _blocked
+    html_body = remote_images = fetch_remote = thread = _blocked
+    q_exact = q_from_domain_between = q_subject_tokens = _blocked
 
 
 BACKENDS = {"gmail": GmailBackend, "outlook": OutlookBackend}

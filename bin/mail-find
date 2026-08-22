@@ -13,7 +13,9 @@ Output is JSON by default so the model gets structure, not scraped text.
 
 import argparse
 import json
+import re
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -53,27 +55,82 @@ def cmd_search(args, backend):
         print()
 
 
+REPLY_SUBJECT = re.compile(r"^\s*(re|fwd|fw|aw)\s*:", re.I)
+
+AUTH_HINT = ("gws auth login --scopes="
+             "https://www.googleapis.com/auth/gmail.readonly,"
+             "https://www.googleapis.com/auth/gmail.send")
+
+
+def _thread_size(backend, msg):
+    """Only worth a call when the subject says this is part of an exchange."""
+    if not REPLY_SUBJECT.match(msg.get("subject") or ""):
+        return None
+    try:
+        return len(backend.thread(msg["thread_id"]))
+    except BackendError:
+        return None
+
+
+def _next_steps(backend, msg, fetched_remote):
+    """What this message can still give up that this call did not return.
+
+    Stated as runnable commands: the caller acts on a result, and a count with
+    no command attached is a fact nobody uses. This is where the tool earns
+    back the failure it used to cause -- 'no attachments' on a message whose
+    only real content was a linked screenshot.
+    """
+    steps = []
+    if not fetched_remote:
+        n = len(msg.get("remote_image_urls") or [])
+        if n:
+            steps.append(f"{n} image(s) referenced by URL, not fetched. "
+                         f"To include them: mail-find read {msg['id']} --fetch-remote")
+    n_thread = _thread_size(backend, msg)
+    if n_thread and n_thread > 1:
+        steps.append(f"1 of {n_thread} messages in this thread. "
+                     f"For the whole exchange: mail-find thread {msg['id']}")
+    return steps
+
+
 def cmd_read(args, backend):
     want_remote = getattr(args, "fetch_remote", False)
-    msg = backend.message(args.message_id, include_remote=want_remote)
+    # Remote URLs are always collected: knowing an image exists costs nothing
+    # and is what stops a linked screenshot from reading as absence.
+    msg = backend.message(args.message_id, include_remote=True)
 
     if want_remote:
         out_dir = Path(args.out).expanduser() if getattr(args, "out", None) \
             else ATTACHMENT_DIR / args.message_id / "remote"
         msg["remote_images"] = [
-            backend.fetch_remote(url, out_dir) for url in msg.pop("remote_image_urls", [])
+            backend.fetch_remote(url, out_dir) for url in msg.get("remote_image_urls") or []
         ]
 
+    if not args.raw:
+        from mailkit import transcript
+        spoken, quoted, marker = transcript.split_quote(msg["body"])
+        # A lone message has no earlier turn to hold what a fold would remove.
+        if quoted and REPLY_SUBJECT.match(msg.get("subject") or ""):
+            msg["body"] = transcript.tidy(spoken)
+            msg["quoted_chars"] = len(quoted)
+            msg["quote_marker"] = marker
+        else:
+            msg["body"] = transcript.tidy(msg["body"])
+
+    steps = _next_steps(backend, msg, want_remote)
+    if not want_remote:
+        msg.pop("remote_image_urls", None)
+
     if args.json:
+        msg["next_steps"] = steps
         return emit(msg)
 
     for field in ("date", "from", "to", "cc", "subject"):
         if msg.get(field):
             print(f"{field.capitalize():<9} {msg[field]}")
-    if msg["attachments"]:
-        for a in msg["attachments"]:
-            tag = " [inline]" if a.get("inline") else ""
-            print(f"{'Attach':<9} {a['name']} ({human_size(a['size'])}){tag}")
+    for a in msg["attachments"]:
+        tag = " [inline]" if a.get("inline") else ""
+        print(f"{'Attach':<9} {a['name']} ({human_size(a['size'])}){tag}")
     for img in msg.get("remote_images", []):
         if img.get("error"):
             print(f"{'Remote':<9} {img['url'][:70]} -- FAILED: {img['error']}")
@@ -83,18 +140,47 @@ def cmd_read(args, backend):
         print(f"{'Remote':<9} {img['path']}  {dims}{note}")
     print()
     print(msg["body"])
+    if msg.get("quoted_chars"):
+        print(f"\n[folded {msg['quoted_chars']} chars quoted via "
+              f"{msg['quote_marker']}; --raw for the message as sent]")
+    for s in steps:
+        print(f"\n{s}")
+
+
+def cmd_resolve(args, backend):
+    """Turn something copyable out of a mail client into a message id."""
+    raw = args.reference.strip()
+    if raw.lower().startswith("message://"):
+        raw = urllib.parse.unquote(raw[len("message://"):])
+    rfc_id = raw.strip().strip("<>").strip()
+    if not rfc_id:
+        die("nothing to resolve -- pass a Message-ID or a message:// URL")
+
+    hits = backend.search(backend.q_rfc822(rfc_id), limit=2)
+    if not hits:
+        die(f"no message in this mailbox has Message-ID {rfc_id}. "
+            f"Check it came from this account, and that it is the Message-ID "
+            f"header rather than a thread or conversation id")
+    if args.json:
+        return emit(hits[0])
+    h = hits[0]
+    print(f"{h['id']}  {h.get('date') or ''}")
+    print(f"  from: {h.get('from')}")
+    print(f"  subj: {h.get('subject')}")
+    print(f"\nRead it:  mail-find read {h['id']}")
 
 
 def cmd_thread(args, backend):
     msg = backend.message(args.message_id)
-    msgs = backend.thread(msg["thread_id"], with_bodies=args.transcript)
+    msgs = backend.thread(msg["thread_id"], with_bodies=True)
 
-    if args.transcript:
+    if not args.raw:
         from mailkit import transcript
         result = transcript.build(msgs)
         if args.json:
             return emit(result)
         print(transcript.render(result))
+        print("\n--raw for every message exactly as sent, quotes and all")
         return
 
     if args.json:
@@ -112,7 +198,9 @@ def cmd_thread(args, backend):
 def cmd_context(args, backend):
     from mailkit import context
     result = context.build(backend, args.message_id, window_days=args.window,
-                           limit=args.limit, min_score=args.min_score)
+                           limit=args.limit,
+                           min_score=0 if args.raw else args.min_score,
+                           keep_common=args.raw)
     if args.json:
         return emit(result)
 
@@ -143,9 +231,14 @@ def cmd_context(args, backend):
 def cmd_attachments(args, backend):
     atts = backend.attachments(args.message_id)
     if args.json:
-        return emit(atts)
+        return emit({"attachments": atts,
+                     "remote_image_urls": backend.remote_images(args.message_id)})
     if not atts:
-        print("no attachments")
+        print("no file attachments")
+        remote = backend.remote_images(args.message_id)
+        if remote:
+            print(f"\n{len(remote)} image(s) referenced by URL in the body. "
+                  f"To fetch them: mail-find read {args.message_id} --fetch-remote")
         return
     for a in atts:
         tag = "  [inline]" if a.get("inline") else ""
@@ -226,15 +319,23 @@ def main():
                         "tells the sender the mail was opened; the payoff is that "
                         "a screenshot someone sent you stops being an unread URL")
     r.add_argument("--out", metavar="DIR", help="destination for downloaded images")
+    r.add_argument("--raw", action="store_true",
+                   help="the body exactly as the provider returned it -- no "
+                        "quote folding, no link de-duplication. Use when the "
+                        "processed form looks wrong or something is missing")
     r.set_defaults(fn=cmd_read)
+
+    rv = sub.add_parser("resolve", parents=[common],
+                        help="find a message from a Message-ID or a message:// "
+                             "URL dragged out of a mail client")
+    rv.add_argument("reference", help="Message-ID (with or without <>) or message:// URL")
+    rv.set_defaults(fn=cmd_resolve)
 
     t = sub.add_parser("thread", parents=[common],
                        help="every message Gmail grouped with this one (exact)")
     t.add_argument("message_id")
-    t.add_argument("--transcript", action="store_true",
-                   help="fold each reply's quoted tail and render the thread "
-                        "as one chronological transcript. Quoted text is not "
-                        "lost -- it is the earlier turns, shown once each")
+    t.add_argument("--raw", action="store_true",
+                   help="every message exactly as sent, quoted tails included")
     t.set_defaults(fn=cmd_thread)
 
     c = sub.add_parser("context", parents=[common],
@@ -247,6 +348,9 @@ def main():
     c.add_argument("--min-score", type=int, default=2,
                    help="drop hits below this confidence (1 admits matches "
                         "resting on a single weak signal)")
+    c.add_argument("--raw", action="store_true",
+                   help="include hits filtered out as weak or as matching an "
+                        "identifier too common to be distinctive")
     c.set_defaults(fn=cmd_context)
 
     a = sub.add_parser("attachments", parents=[common],
@@ -267,7 +371,8 @@ def main():
     try:
         backend = get_backend(args.account)
         if not backend.account():
-            die(f"not authenticated for {args.account} -- see README")
+            hint = f"\n    {AUTH_HINT}" if args.account == "gmail" else ""
+            die(f"not authenticated for {args.account}. Run:{hint}")
         args.fn(args, backend)
     except BackendError as e:
         die(str(e))

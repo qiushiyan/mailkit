@@ -118,7 +118,7 @@ def _domain(address):
 
 
 def build(backend, msg_id, window_days=DEFAULT_WINDOW_DAYS, limit=DEFAULT_LIMIT,
-          min_score=2):
+          min_score=2, keep_common=False):
     seed = backend.message(msg_id, include_remote=True)
     seed_when = _parse_date(seed.get("date"))
 
@@ -162,7 +162,7 @@ def build(backend, msg_id, window_days=DEFAULT_WINDOW_DAYS, limit=DEFAULT_LIMIT,
     scored = {}
     dropped = []
     for (query, reason, weight), hits in results:
-        if weight == 5 and len(hits) > TOO_COMMON:
+        if weight == 5 and len(hits) > TOO_COMMON and not keep_common:
             dropped.append({"query": query, "reason": reason, "hits": len(hits)})
             continue
         for hit in hits:

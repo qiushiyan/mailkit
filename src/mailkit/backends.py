@@ -245,6 +245,10 @@ class GmailBackend:
     # clustering that uses them is not.
 
     @staticmethod
+    def q_rfc822(message_id):
+        return f"rfc822msgid:{message_id}"
+
+    @staticmethod
     def q_exact(text):
         return f'"{text}"'
 
@@ -448,6 +452,7 @@ class OutlookBackend:
     account = search = message = attachments = fetch_attachment = send = _blocked
     html_body = remote_images = fetch_remote = thread = _blocked
     q_exact = q_from_domain_between = q_subject_tokens = _blocked
+    q_rfc822 = _blocked
 
 
 BACKENDS = {"gmail": GmailBackend, "outlook": OutlookBackend}

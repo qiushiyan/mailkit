@@ -104,3 +104,66 @@ of it is reachable from `thread`.
 - Identifier keywords are English-only.
 - Nothing dedupes near-identical notifications; three "Updates to:" messages
   come back as three rows.
+
+---
+
+# Reading a reply chain
+
+`mail-find thread <id> --transcript` renders the thread as one chronological
+transcript. Nothing is reworded; text is rearranged and repeated copies are
+dropped.
+
+## What the raw form looks like
+
+Measured on a real six-message tenancy thread:
+
+| problem | why it matters |
+|---|---|
+| Outlook replies carry **no quote markers at all** | depth is signalled only by a `From:/Sent:/To:` block or an `On <date>, X wrote:` line. Misread that one line and a statement gets attributed to the wrong person -- the failure that yields a confident wrong answer |
+| one message mixes **two quoting conventions** | the participants use different clients, so an Outlook header block and an Apple `On ... wrote:` appear in the same body |
+| newest-first | reading top to bottom means reading backwards in time |
+| `text<url>` duplication | `FHashim@quintainliving.com<mailto:FHashim@quintainliving.com>` -- every address and link doubled by the HTML-to-text step |
+| platform banners inside the quote | Microsoft's "You don't often get email from..." sits in the quoted body and reads like something the sender wrote |
+| signatures and legal footers repeat per level | six copies of the same contact block |
+
+Body length grows monotonically down the chain -- 942, 1205, 1578, 2185, 2610
+characters -- because each reply re-includes everything before it. 8982
+characters for roughly 2000 characters of conversation.
+
+## Folding is verified, not assumed
+
+Dropping a quoted block is only safe when that text is *elsewhere in the
+thread* -- it is an earlier turn, still present, just not repeated. A forward is
+the opposite: what it quotes is usually the only copy.
+
+Marker detection alone does not establish which case you are in, and trusting it
+destroyed data on the first real forward tried: Apple Mail prefixes
+`Begin forwarded message:` with the same `> ` it uses for replies, so a
+reply-shaped pattern matched and all 6390 characters of a single-message thread
+were folded into nothing.
+
+So the check is now empirical. Before folding, the quoted block's prose lines
+are compared against everything already seen in the thread; below 80% coverage
+the block stays, with the reason recorded in `fold_rejected`. Structural lines
+(attribution, header blocks, `E:`/`T:` contact rows) are excluded from the
+comparison -- they are format, and their absence upstream never means content
+was lost.
+
+## Result
+
+```
+turn 1: no quote
+turn 2: folded 1024 via caret
+turn 3: folded 1324 via caret
+turn 4: folded 1769 via outlook-header
+turn 5: folded 2123 via outlook-header
+turn 6: folded 374 via caret
+
+transcript 2116 chars from 8982 raw (6866 folded as repetition)
+```
+
+Independently verified afterwards: of every prose line folded away, **zero**
+could not be found in an earlier turn. Both forwards tested come back whole.
+
+Each turn still shows what was folded and by which marker, so a fold can be
+challenged the same way a `context` match can.

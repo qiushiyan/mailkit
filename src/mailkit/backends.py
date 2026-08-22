@@ -207,7 +207,7 @@ class GmailBackend:
             "labels": msg.get("labelIds"),
         }
 
-    def thread(self, thread_id):
+    def thread(self, thread_id, with_bodies=False):
         """Every message Gmail itself grouped, in one call.
 
         Exact where it applies -- but Gmail only groups by reply chain plus a
@@ -233,6 +233,11 @@ class GmailBackend:
                 "snippet": msg.get("snippet"),
                 "attachments": self.attachments(msg.get("id"), _msg=msg),
             })
+        if with_bodies:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                bodies = pool.map(self._body, [m["id"] for m in out])
+            for m, body in zip(out, bodies):
+                m["body"] = body
         return out
 
     # --- query builders -------------------------------------------------

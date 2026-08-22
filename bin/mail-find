@@ -87,7 +87,16 @@ def cmd_read(args, backend):
 
 def cmd_thread(args, backend):
     msg = backend.message(args.message_id)
-    msgs = backend.thread(msg["thread_id"])
+    msgs = backend.thread(msg["thread_id"], with_bodies=args.transcript)
+
+    if args.transcript:
+        from mailkit import transcript
+        result = transcript.build(msgs)
+        if args.json:
+            return emit(result)
+        print(transcript.render(result))
+        return
+
     if args.json:
         return emit(msgs)
     for m in msgs:
@@ -222,6 +231,10 @@ def main():
     t = sub.add_parser("thread", parents=[common],
                        help="every message Gmail grouped with this one (exact)")
     t.add_argument("message_id")
+    t.add_argument("--transcript", action="store_true",
+                   help="fold each reply's quoted tail and render the thread "
+                        "as one chronological transcript. Quoted text is not "
+                        "lost -- it is the earlier turns, shown once each")
     t.set_defaults(fn=cmd_thread)
 
     c = sub.add_parser("context", parents=[common],

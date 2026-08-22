@@ -23,6 +23,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import html2text
+
 IMG_SRC_RE = re.compile(r'<img[^>]+src\s*=\s*["\']([^"\']+)["\']', re.I)
 
 # A browser-ish agent: some CDNs refuse python-urllib outright.
@@ -282,15 +284,30 @@ class GmailBackend:
             "cc": h.get("cc"),
             "subject": h.get("subject"),
             "snippet": msg.get("snippet"),
-            "body": self._body(msg_id),
+            "body": self._body(msg_id, _msg=msg),
             "attachments": self.attachments(msg_id, _msg=msg),
         }
         if include_remote:
             result["remote_image_urls"] = self.remote_images(msg_id, _msg=msg)
         return result
 
-    def _body(self, msg_id):
-        # +read already handles multipart/alternative, base64 and html->text.
+    def _body(self, msg_id, _msg=None):
+        """Prefer converting the HTML ourselves.
+
+        `gws +read` also returns text, but its conversion discards
+        <blockquote>, which is where a reply's quote structure lives -- on one
+        real Outlook-authored reply that is the difference between 20 quoted
+        lines and none. Converting here also keeps both providers on one
+        converter, so rules calibrated on Gmail hold on Graph.
+
+        Falls back to +read for a message with no HTML part at all.
+        """
+        try:
+            html_source = self.html_body(msg_id, _msg=_msg)
+        except BackendError:
+            html_source = ""
+        if html_source:
+            return html2text.convert(html_source)
         try:
             return _gws(["gmail", "+read", "--id", msg_id]).strip()
         except BackendError as e:

@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
-	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
 // SendMail builds the compose/commit command. Composing is always a dry
@@ -57,25 +56,27 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// Everything up to Send is local or read-only: a failure
+				// here releases the claim, because nothing left the machine.
 				prepared, err := a.Drafts.Open(rec)
 				if err != nil {
-					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrTooLarge, err), a.Now()) // back to pending
+					_ = a.Drafts.Release(rec, err)
 					return err
 				}
 				box, err := a.Open(ctx, rec.Account)
 				if err != nil {
-					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrAuth, err), a.Now())
+					_ = a.Drafts.Release(rec, err)
 					return err
 				}
 				acct, err := box.Account(ctx)
 				if err != nil {
-					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrAuth, err), a.Now())
+					_ = a.Drafts.Release(rec, err)
 					return err
 				}
 				if prepared.Size() > acct.SendLimit {
-					err := fmt.Errorf("%w: message is %s, over the %s limit for %s; send a share link instead",
-						mail.ErrTooLarge, drafts.HumanSize(prepared.Size()), drafts.HumanSize(acct.SendLimit), rec.Account)
-					_ = a.Drafts.Finish(rec, "", "", err, a.Now())
+					err := fmt.Errorf("message is %s, over the %s limit for %s; send a share link instead",
+						drafts.HumanSize(prepared.Size()), drafts.HumanSize(acct.SendLimit), rec.Account)
+					_ = a.Drafts.Release(rec, err)
 					return err
 				}
 				id, sendErr := box.Send(ctx, prepared)

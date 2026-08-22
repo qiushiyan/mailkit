@@ -24,8 +24,11 @@ type Mailbox struct {
 	// shared converter is the natural value; tests that set Body.Text
 	// only can leave it nil.
 	TextOf func(mail.Message) string
-	// AuthErr, when set, is returned by Account -- for the not-logged-in path.
+	// AuthErr, when set, is returned by every operation -- the not-logged-in path.
 	AuthErr error
+	// SendErr, when set, is returned by Send after the message was accepted for
+	// transmission -- the outcome-unknown path.
+	SendErr error
 
 	mu       sync.Mutex
 	messages []mail.Message
@@ -66,6 +69,9 @@ func (m *Mailbox) Account(context.Context) (mail.Account, error) {
 }
 
 func (m *Mailbox) Resolve(_ context.Context, id mail.MessageID) (mail.Envelope, error) {
+	if m.AuthErr != nil {
+		return mail.Envelope{}, m.AuthErr
+	}
 	id = mail.MessageID(strings.Trim(string(id), "<> "))
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -88,6 +94,9 @@ func (m *Mailbox) text(msg mail.Message) string {
 }
 
 func (m *Mailbox) Search(_ context.Context, c mail.Criteria, limit int) ([]mail.Envelope, error) {
+	if m.AuthErr != nil {
+		return nil, m.AuthErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Searches = append(m.Searches, c)
@@ -106,6 +115,9 @@ func (m *Mailbox) Search(_ context.Context, c mail.Criteria, limit int) ([]mail.
 }
 
 func (m *Mailbox) Fetch(_ context.Context, id string) (mail.Message, error) {
+	if m.AuthErr != nil {
+		return mail.Message{}, m.AuthErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, msg := range m.messages {
@@ -117,6 +129,9 @@ func (m *Mailbox) Fetch(_ context.Context, id string) (mail.Message, error) {
 }
 
 func (m *Mailbox) Conversation(_ context.Context, convID string) ([]mail.Message, error) {
+	if m.AuthErr != nil {
+		return nil, m.AuthErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []mail.Message
@@ -130,6 +145,9 @@ func (m *Mailbox) Conversation(_ context.Context, convID string) ([]mail.Message
 }
 
 func (m *Mailbox) Open(_ context.Context, h mail.Handle, w io.Writer) error {
+	if m.AuthErr != nil {
+		return m.AuthErr
+	}
 	m.mu.Lock()
 	b, ok := m.parts[h]
 	m.mu.Unlock()
@@ -143,6 +161,9 @@ func (m *Mailbox) Open(_ context.Context, h mail.Handle, w io.Writer) error {
 func (m *Mailbox) Send(_ context.Context, p *mail.Prepared) (string, error) {
 	if p.Size() > m.SendLimit {
 		return "", mail.ErrTooLarge
+	}
+	if m.SendErr != nil {
+		return "", m.SendErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

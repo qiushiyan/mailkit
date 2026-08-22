@@ -31,6 +31,9 @@ const (
 	sendLimit = 25 << 20
 	// fanOut is the parallelism of the per-hit metadata fetch.
 	fanOut = 8
+	// maxScan bounds a narrowing walk: past this many listed messages
+	// without limit exact matches, the query is too broad to answer honestly.
+	maxScan = 1000
 )
 
 // Mailbox is a Gmail account.
@@ -131,6 +134,63 @@ func compile(c mail.Criteria) string {
 	return strings.Join(parts, " ")
 }
 
+// Search compiles the criteria to one Gmail query and walks the listing,
+// fetching one metadata envelope per hit in parallel -- Gmail's list
+// returns bare ids -- and narrowing locally until it has limit exact
+// matches or the listing is exhausted. Gmail's operators are coarser than
+// the port in two ways the envelope can correct: date operators are
+// day-granular, and from:/to: also match display names. has:attachment is
+// left to Gmail because a metadata envelope cannot see parts, and phrases
+// are its full-text match by design.
+func (m *Mailbox) Search(ctx context.Context, c mail.Criteria, limit int) ([]mail.Envelope, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	local := c
+	local.Phrases, local.HasAttachment = nil, false
+	q := compile(c)
+	var out []mail.Envelope
+	page, scanned := "", 0
+	for {
+		call := m.svc.Users.Messages.List("me").Q(q).MaxResults(int64(min(max(limit, 25), 500))).Context(ctx)
+		if page != "" {
+			call = call.PageToken(page)
+		}
+		resp, err := call.Do()
+		if err != nil {
+			return nil, m.wrap("search", err)
+		}
+		ids := make([]string, 0, len(resp.Messages))
+		for _, r := range resp.Messages {
+			ids = append(ids, r.Id)
+		}
+		envs, err := m.envelopes(ctx, ids)
+		if err != nil {
+			return nil, m.wrap("search", err)
+		}
+		for _, e := range envs {
+			scanned++
+			if !local.IsZero() && !local.Match(e, "") {
+				continue
+			}
+			out = append(out, e)
+			if len(out) >= limit {
+				return out, nil
+			}
+		}
+		if resp.NextPageToken == "" {
+			return out, nil
+		}
+		if scanned >= maxScan {
+			return nil, &mail.ProviderError{Provider: providerName, Op: "search",
+				Err: fmt.Errorf("scanned %d messages and found %d matches; narrow the query (tighter dates, from:, subject:)", scanned, len(out))}
+		}
+		page = resp.NextPageToken
+	}
+}
+
+// listIDs returns up to limit ids for a query in Gmail's own semantics --
+// Resolve and NativeSearch, where the provider's answer is the answer.
 func (m *Mailbox) listIDs(ctx context.Context, q string, limit int) ([]string, error) {
 	var ids []string
 	page := ""
@@ -156,18 +216,8 @@ func (m *Mailbox) listIDs(ctx context.Context, q string, limit int) ([]string, e
 	}
 }
 
-// Search compiles the criteria to one Gmail query, lists ids, then fetches
-// one metadata envelope per hit in parallel -- Gmail's list returns bare
-// ids. Gmail's date operators are day-granular, so the time bounds are
-// re-applied here; everything else the provider matched exactly.
-func (m *Mailbox) Search(ctx context.Context, c mail.Criteria, limit int) ([]mail.Envelope, error) {
-	if limit <= 0 {
-		limit = 25
-	}
-	ids, err := m.listIDs(ctx, compile(c), limit)
-	if err != nil {
-		return nil, m.wrap("search", err)
-	}
+// envelopes fetches metadata for ids in parallel, in order.
+func (m *Mailbox) envelopes(ctx context.Context, ids []string) ([]mail.Envelope, error) {
 	out := make([]mail.Envelope, len(ids))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(fanOut)
@@ -182,16 +232,9 @@ func (m *Mailbox) Search(ctx context.Context, c mail.Criteria, limit int) ([]mai
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, m.wrap("search", err)
+		return nil, err
 	}
-	var kept []mail.Envelope
-	for _, e := range out {
-		if (!c.After.IsZero() && e.Received.Before(c.After)) || (!c.Before.IsZero() && !e.Received.Before(c.Before)) {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	return kept, nil
+	return out, nil
 }
 
 func (m *Mailbox) Fetch(ctx context.Context, id string) (mail.Message, error) {

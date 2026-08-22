@@ -21,7 +21,11 @@ import (
 // Search is exact: every returned envelope satisfies the Criteria, and the
 // result is either limit long or the mailbox had no more matches. An adapter
 // whose provider cannot express a predicate pages a coarser request and
-// narrows locally; the caller never learns which.
+// narrows locally; the caller never learns which. A walk that scans far
+// past limit without filling it is an error that says to narrow the query,
+// never a short answer. The one predicate left to the provider is Phrases:
+// it is the provider's full-text match, because verifying it would mean
+// fetching every candidate body.
 type Mailbox interface {
 	// Account proves the credentials work. ErrAuth carries the command that
 	// would fix it.

@@ -42,10 +42,9 @@ const (
 	sendLimit = 3 << 20
 	// pageSize for coarse requests that are narrowed locally.
 	pageSize = 50
-	// maxPages bounds a narrowing loop that never finds enough.
-	maxPages = 8
-	// embedDepth bounds recursion into itemAttachments.
-	embedDepth = 2
+	// maxScan bounds a narrowing walk: past this many listed messages
+	// without limit exact matches, the query is too broad to answer honestly.
+	maxScan = 1000
 )
 
 // Mailbox is a Microsoft 365 account.
@@ -69,7 +68,11 @@ type odataError struct {
 }
 
 func (m *Mailbox) do(ctx context.Context, op, method, path string, body io.Reader, contentType string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, m.BaseURL+path, body)
+	target := path
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = m.BaseURL + path
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return &mail.ProviderError{Provider: providerName, Op: op, Err: err}
 	}
@@ -260,49 +263,24 @@ func compile(c mail.Criteria) plan {
 }
 
 // Search pages the coarse request and narrows locally until it has limit
-// exact matches or the pages run out.
+// exact matches or the pages run out. A walk that scans maxScan rows
+// without filling limit is an error, never a short answer.
 func (m *Mailbox) Search(ctx context.Context, c mail.Criteria, limit int) ([]mail.Envelope, error) {
 	if limit <= 0 {
 		limit = 25
 	}
 	p := compile(c)
 	p.query.Set("$top", strconv.Itoa(pageSize))
-	path := "/me/messages?" + p.query.Encode()
+	link := "/me/messages?" + p.query.Encode()
 	var out []mail.Envelope
-	for page := 0; page < maxPages && path != ""; page++ {
-		var l listing
-		if err := m.do(ctx, "search", http.MethodGet, path, nil, "", &l); err != nil {
-			return nil, err
-		}
-		for _, msg := range l.Value {
-			e := envelope(msg)
-			if !p.local.IsZero() && !p.local.Match(e, "") {
-				continue
-			}
-			out = append(out, e)
-			if len(out) >= limit {
-				return out, nil
-			}
-		}
-		path = strings.TrimPrefix(l.NextLink, m.BaseURL)
-		if l.NextLink != "" && path == l.NextLink {
-			// Absolute link on another host: follow it as given.
-			return m.followAbsolute(ctx, l.NextLink, p, out, limit, page+1)
-		}
-	}
-	return out, nil
-}
-
-func (m *Mailbox) followAbsolute(ctx context.Context, link string, p plan, out []mail.Envelope, limit, page int) ([]mail.Envelope, error) {
-	saved := m.BaseURL
-	defer func() { m.BaseURL = saved }()
-	m.BaseURL = ""
-	for ; page < maxPages && link != ""; page++ {
+	scanned := 0
+	for link != "" {
 		var l listing
 		if err := m.do(ctx, "search", http.MethodGet, link, nil, "", &l); err != nil {
 			return nil, err
 		}
 		for _, msg := range l.Value {
+			scanned++
 			e := envelope(msg)
 			if !p.local.IsZero() && !p.local.Match(e, "") {
 				continue
@@ -311,6 +289,10 @@ func (m *Mailbox) followAbsolute(ctx context.Context, link string, p plan, out [
 			if len(out) >= limit {
 				return out, nil
 			}
+		}
+		if l.NextLink != "" && scanned >= maxScan {
+			return nil, &mail.ProviderError{Provider: providerName, Op: "search",
+				Err: fmt.Errorf("scanned %d messages and found %d matches; narrow the query (tighter dates, from:, subject:)", scanned, len(out))}
 		}
 		link = l.NextLink
 	}
@@ -318,10 +300,16 @@ func (m *Mailbox) followAbsolute(ctx context.Context, link string, p plan, out [
 }
 
 func (m *Mailbox) Fetch(ctx context.Context, id string) (mail.Message, error) {
-	return m.fetch(ctx, "fetch", id, embedDepth)
+	return m.fetch(ctx, "fetch", id)
 }
 
-func (m *Mailbox) fetch(ctx context.Context, op, id string, depth int) (mail.Message, error) {
+// fetch gets the message with its attachment list, then completes the two
+// kinds the list cannot carry: an itemAttachment's message needs a second
+// request to expand, and a referenceAttachment's sourceUrl is not a base
+// property the $expand projection returns. One level of embedding is
+// expanded; a message embedded inside an embedded message is reported as
+// truncated, never as absent.
+func (m *Mailbox) fetch(ctx context.Context, op, id string) (mail.Message, error) {
 	q := url.Values{}
 	q.Set("$select", selectFields+",body,uniqueBody")
 	q.Set("$expand", "attachments($select=id,name,contentType,size,isInline,contentId)")
@@ -333,40 +321,37 @@ func (m *Mailbox) fetch(ctx context.Context, op, id string, depth int) (mail.Mes
 	if err != nil {
 		return mail.Message{}, &mail.ProviderError{Provider: providerName, Op: op, Err: err}
 	}
-	// itemAttachments need a second request each to expand the item.
 	for i, p := range out.Parts {
-		if _, ok := p.Content.(mail.EmbeddedPart); !ok {
-			continue
+		attPath := "/me/messages/" + url.PathEscape(id) + "/attachments/" + url.PathEscape(msg.Attachments[i].ID)
+		switch p.Content.(type) {
+		case mail.LinkedPart:
+			var a attachment
+			if err := m.do(ctx, op, http.MethodGet, attPath, nil, "", &a); err != nil {
+				return mail.Message{}, err
+			}
+			out.Parts[i].Content = mail.LinkedPart{URL: a.SourceURL}
+		case mail.EmbeddedPart:
+			var a attachment
+			if err := m.do(ctx, op, http.MethodGet, attPath+"?$expand=microsoft.graph.itemattachment/item", nil, "", &a); err != nil {
+				return mail.Message{}, err
+			}
+			if a.Item == nil {
+				out.Parts[i].Content = mail.EmbeddedPart{Truncated: true}
+				continue
+			}
+			inner, err := translate(*a.Item)
+			if err != nil {
+				return mail.Message{}, &mail.ProviderError{Provider: providerName, Op: op, Err: err}
+			}
+			for j, ip := range inner.Parts {
+				if _, ok := ip.Content.(mail.EmbeddedPart); ok {
+					inner.Parts[j].Content = mail.EmbeddedPart{Truncated: true}
+				}
+			}
+			out.Parts[i].Content = mail.EmbeddedPart{Item: &inner}
 		}
-		if depth <= 0 {
-			out.Parts[i].Content = mail.EmbeddedPart{Truncated: true}
-			continue
-		}
-		var a attachment
-		path := "/me/messages/" + url.PathEscape(id) + "/attachments/" + url.PathEscape(msg.Attachments[i].ID) + "?$expand=microsoft.graph.itemattachment/item"
-		if err := m.do(ctx, op, http.MethodGet, path, nil, "", &a); err != nil {
-			return mail.Message{}, err
-		}
-		if a.Item == nil {
-			out.Parts[i].Content = mail.EmbeddedPart{Truncated: true}
-			continue
-		}
-		inner, err := translate(*a.Item)
-		if err != nil {
-			return mail.Message{}, &mail.ProviderError{Provider: providerName, Op: op, Err: err}
-		}
-		out.Parts[i].Content = mail.EmbeddedPart{Item: &inner, Truncated: hasEmbedded(inner) && depth-1 <= 0}
 	}
 	return out, nil
-}
-
-func hasEmbedded(m mail.Message) bool {
-	for _, p := range m.Parts {
-		if _, ok := p.Content.(mail.EmbeddedPart); ok {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Message, error) {
@@ -378,7 +363,7 @@ func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Messa
 	q.Set("$top", strconv.Itoa(pageSize))
 	path := "/me/messages?" + q.Encode()
 	var out []mail.Message
-	for page := 0; page < maxPages && path != ""; page++ {
+	for path != "" {
 		var l listing
 		if err := m.do(ctx, "conversation", http.MethodGet, path, nil, "", &l); err != nil {
 			return nil, err
@@ -390,7 +375,7 @@ func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Messa
 			}
 			out = append(out, t)
 		}
-		path = strings.TrimPrefix(l.NextLink, m.BaseURL)
+		path = l.NextLink
 	}
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j].Received.Before(out[j-1].Received); j-- {
@@ -410,7 +395,9 @@ func (m *Mailbox) Open(ctx context.Context, h mail.Handle, w io.Writer) error {
 	return m.do(ctx, "open", http.MethodGet, path, nil, "", w)
 }
 
-// Send posts the prepared message in MIME form.
+// Send posts the prepared message in MIME form. Graph answers 202 with no
+// body, so there is no provider id to return; the draft record keeps the
+// RFC Message-ID for recovery.
 func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared) (string, error) {
 	if p.Size() > sendLimit {
 		return "", &mail.ProviderError{Provider: providerName, Op: "send", Err: mail.ErrTooLarge}
@@ -419,8 +406,7 @@ func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared) (string, error) {
 	if err := m.do(ctx, "send", http.MethodPost, "/me/sendMail", bytes.NewBufferString(body), "text/plain", nil); err != nil {
 		return "", err
 	}
-	// sendMail returns 202 with no body; the Message-ID we set is the handle.
-	return p.Header("Message-ID"), nil
+	return "", nil
 }
 
 // --- translation ----------------------------------------------------------

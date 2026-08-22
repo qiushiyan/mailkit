@@ -102,6 +102,17 @@ var (
 	FoldCoverage = 0.8
 )
 
+func contentLines(text string) []string {
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(quotePrefix.ReplaceAllString(line, ""))
+		if line != "" && !structural.MatchString(line) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
 func proseLines(text string) []string {
 	var out []string
 	for line := range strings.SplitSeq(text, "\n") {
@@ -114,9 +125,15 @@ func proseLines(text string) []string {
 }
 
 // Coverage is how much of a quoted block genuinely repeats something in
-// pool. It returns the ratio and the number of prose lines considered.
+// pool. It returns the ratio and the number of lines considered: prose
+// lines when the block has any, otherwise every non-structural line, so a
+// quote of short answers ("Yes, 3pm works.") is checked rather than waved
+// through. Only a block that is structure alone counts as fully covered.
 func Coverage(quoted, pool string) (float64, int) {
 	lines := proseLines(quoted)
+	if len(lines) == 0 {
+		lines = contentLines(quoted)
+	}
 	if len(lines) == 0 {
 		return 1, 0
 	}

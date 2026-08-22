@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +30,7 @@ import (
 type cassette struct {
 	t           *testing.T
 	messages    map[string]*gm.Message
+	mu          sync.Mutex // the SDK fans out; handlers run concurrently
 	requests    []*url.URL
 	attachment  string // base64url bytes served for any attachments.get
 	lastSendRaw string // the raw field of the last messages.send
@@ -178,7 +183,9 @@ func decodeStructure(m *gm.Message) string {
 }
 
 func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
 	c.requests = append(c.requests, r.URL)
+	c.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me")
 	writeJSON := func(v any) {
 		w.Header().Set("Content-Type", "application/json")
@@ -190,17 +197,34 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(gm.Profile{EmailAddress: "me@gmail.test"})
 	case path == "/messages":
 		q := r.URL.Query().Get("q")
-		var resp gm.ListMessagesResponse
+		// Gmail lists newest first and pages by maxResults; the token is
+		// an offset here.
+		var all []*gm.Message
 		for _, m := range c.messages {
 			if c.matches(m, q) {
-				resp.Messages = append(resp.Messages, &gm.Message{Id: m.Id, ThreadId: m.ThreadId})
+				all = append(all, m)
 			}
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].InternalDate > all[j].InternalDate })
+		start, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+		size, _ := strconv.Atoi(r.URL.Query().Get("maxResults"))
+		if size <= 0 {
+			size = 100
+		}
+		var resp gm.ListMessagesResponse
+		for i := start; i < len(all) && i < start+size; i++ {
+			resp.Messages = append(resp.Messages, &gm.Message{Id: all[i].Id, ThreadId: all[i].ThreadId})
+		}
+		if start+size < len(all) {
+			resp.NextPageToken = strconv.Itoa(start + size)
 		}
 		writeJSON(resp)
 	case path == "/messages/send":
 		var body gm.Message
 		_ = json.UnmarshalRead(r.Body, &body)
+		c.mu.Lock()
 		c.lastSendRaw = body.Raw
+		c.mu.Unlock()
 		writeJSON(gm.Message{Id: "sent-1"})
 	case strings.HasPrefix(path, "/messages/") && strings.Contains(path, "/attachments/"):
 		msgID := strings.TrimPrefix(path, "/messages/")
@@ -426,4 +450,54 @@ func TestTranslate_PartWithoutFilenameIsStillAPart(t *testing.T) {
 			t.Errorf("nameless part lost its handle: %+v", p)
 		}
 	}
+}
+
+// Rule: Search is exact -- limit hits or exhaustion, never a truncated
+// coarse page. Gmail's after:/before: are day-granular, so the newest
+// same-day message can pass the provider and fail the precise bound; the
+// adapter must keep paging instead of returning fewer than limit.
+func TestGmail_SearchPagesPastCoarseHitsTheBoundRejects(t *testing.T) {
+	_, box := newCassette(t)
+	// 2026-08-10 holds 09:46, 09:50 and 12:28 messages in the thread.
+	hits, err := box.Search(t.Context(), mail.Criteria{
+		After: time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC), Before: time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC),
+	}, 1)
+	must(t, err)
+	if len(hits) != 1 || hits[0].ID != "19feb14eebb753de" {
+		t.Fatalf("want the 09:50 message alone, got %v", ids(hits))
+	}
+	// Gmail's from: also matches display names; the port's From is an
+	// address or domain. "quintain" is in the sender's name and domain,
+	// so the provider returns hits the port must not.
+	hits, err = box.Search(t.Context(), mail.Criteria{From: "quintain"}, 10)
+	must(t, err)
+	if len(hits) != 0 {
+		t.Errorf("a bare word is neither an address nor a domain: %v", ids(hits))
+	}
+}
+
+func TestGmail_SearchThatCannotFillRefusesToPretend(t *testing.T) {
+	c, box := newCassette(t)
+	base := c.messages["19feb14eebb753de"]
+	for i := range 1200 {
+		clone := *base
+		clone.Id = fmt.Sprintf("clone-%04d", i)
+		c.messages[clone.Id] = &clone
+	}
+	// Every clone is on 2026-08-10 09:50; a precise window after 10:00 on
+	// that day admits none of them locally while the day operator admits all.
+	_, err := box.Search(t.Context(), mail.Criteria{
+		After: time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC), Before: time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC),
+	}, 5)
+	if err == nil || !strings.Contains(err.Error(), "narrow") {
+		t.Fatalf("scanning past the cap must be an error that says to narrow the query, got %v", err)
+	}
+}
+
+func ids(hits []mail.Envelope) []string {
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.ID)
+	}
+	return out
 }

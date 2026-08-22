@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -80,15 +81,11 @@ func (a *app) emit(v any) error {
 
 func (a *app) printf(format string, args ...any) { fmt.Fprintf(a.out, format, args...) }
 
+// mailbox opens the account. No credential check is made here: the first
+// real operation fails with ErrAuth and the login hint if it must, and a
+// working account pays nothing extra.
 func (a *app) mailbox(ctx context.Context) (mail.Mailbox, error) {
-	box, err := a.Open(ctx, a.account)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := box.Account(ctx); err != nil {
-		return nil, err
-	}
-	return box, nil
+	return a.Open(ctx, a.account)
 }
 
 // MailFind builds the read-only command tree.
@@ -226,6 +223,18 @@ type partOut struct {
 	Inline    bool   `json:"inline"`
 	ContentID string `json:"content_id,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Embedded is the attached message itself, for an embedded_message
+	// part: this output is the caller's only copy of its text.
+	Embedded *embeddedOut `json:"embedded,omitempty"`
+}
+
+type embeddedOut struct {
+	From        string    `json:"from"`
+	To          string    `json:"to,omitempty"`
+	Date        string    `json:"date"`
+	Subject     string    `json:"subject"`
+	Body        string    `json:"body"`
+	Attachments []partOut `json:"attachments"`
 }
 
 func partsOut(parts []mail.Part) []partOut {
@@ -239,6 +248,12 @@ func partsOut(parts []mail.Part) []partOut {
 			o.URL = c.URL
 		case mail.EmbeddedPart:
 			o.Truncated = c.Truncated
+			if c.Item != nil {
+				o.Embedded = &embeddedOut{
+					From: c.Item.From.String(), To: mail.Joined(c.Item.To), Date: c.Item.DateHeader, Subject: c.Item.Subject,
+					Body: render.Text(c.Item.Body.HTML, c.Item.Body.Text), Attachments: partsOut(c.Item.Parts),
+				}
+			}
 		}
 		out = append(out, o)
 	}
@@ -293,14 +308,7 @@ func (a *app) readCmd() *cobra.Command {
 				pool := ""
 				if quoted != "" || pf != "" {
 					if conv, err = box.Conversation(ctx, msg.ConversationID); err == nil {
-						var b strings.Builder
-						for _, m := range conv {
-							if m.ID != msg.ID && !m.Received.After(msg.Received) {
-								b.WriteString("\n")
-								b.WriteString(render.Text(m.Body.HTML, m.Body.Text))
-							}
-						}
-						pool = b.String()
+						pool = render.Upstream(conv, msg.ID)
 					}
 				}
 				out.Body, out.QuotedChars, out.QuoteMarker, out.FoldRejected = render.FoldOne(text, pool, pf)
@@ -401,8 +409,11 @@ func (a *app) resolveCmd() *cobra.Command {
 			ctx := cmd.Context()
 			ref := strings.TrimSpace(args[0])
 			if strings.HasPrefix(strings.ToLower(ref), "message://") {
-				ref = ref[len("message://"):]
-				ref = strings.ReplaceAll(strings.ReplaceAll(ref, "%3C", "<"), "%3E", ">")
+				decoded, err := url.PathUnescape(ref[len("message://"):])
+				if err != nil {
+					return fmt.Errorf("message:// URL is not decodable: %w", err)
+				}
+				ref = decoded
 			}
 			ref = strings.Trim(ref, "<> ")
 			if ref == "" {

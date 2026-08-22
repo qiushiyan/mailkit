@@ -117,7 +117,8 @@ func ParseQuery(q string, now time.Time) (Criteria, error) {
 		if val == "" {
 			return Criteria{}, fmt.Errorf("%q needs a value; grammar:\n%s", tok, Grammar)
 		}
-		switch strings.ToLower(op) {
+		op = strings.ToLower(op)
+		switch op {
 		case "from":
 			c.From = val
 		case "to":

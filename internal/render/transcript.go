@@ -3,6 +3,8 @@ package render
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/qiushiyan/mailkit/internal/mail"
 )
@@ -51,11 +53,14 @@ type Transcript struct {
 // must exist in the pool too.
 func FoldOne(body, pool, providerFolded string) (said string, quotedChars int, marker, rejected string) {
 	spoken, quoted, marker := Split(body)
-	if quoted == "" && providerFolded != "" && len(providerFolded) < len(body) {
+	if quoted == "" && providerFolded != "" {
 		// Our markers found nothing but the provider removed something.
-		// Treat what it removed as the quote and verify it like ours.
-		if strings.HasPrefix(normalise(body), strings.TrimSpace(normalise(providerFolded))) {
-			spoken, quoted, marker = providerFolded, body[len(providerFolded):], "provider"
+		// Treat what it removed as the quote and verify it like ours. The
+		// boundary is found in the body's own bytes: the provider's text
+		// differs in whitespace and punctuation, so its length says nothing
+		// about where the body should be cut.
+		if end, ok := prefixEnd(body, providerFolded); ok && end < len(body) {
+			spoken, quoted, marker = body[:end], body[end:], "provider"
 		}
 	}
 	if quoted == "" {
@@ -67,6 +72,57 @@ func FoldOne(body, pool, providerFolded string) (said string, quotedChars int, m
 			fmt.Sprintf("kept: %d%% of %d quoted lines are not in earlier turns", int(ratio*100), n)
 	}
 	return Tidy(spoken), len(quoted), marker, ""
+}
+
+// prefixEnd returns the byte offset in body just past the text that prefix
+// covers, comparing only letters and digits, case-folded. ok is false when
+// prefix is not a prefix of body in that sense, or is empty.
+func prefixEnd(body, prefix string) (int, bool) {
+	want := []rune(normaliseTight(prefix))
+	if len(want) == 0 {
+		return 0, false
+	}
+	i := 0
+	for pos, r := range body {
+		if !isAlnum(r) {
+			continue
+		}
+		if unicode.ToLower(r) != want[i] {
+			return 0, false
+		}
+		i++
+		if i == len(want) {
+			return pos + utf8.RuneLen(r), true
+		}
+	}
+	return 0, false
+}
+
+func isAlnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+func normaliseTight(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if isAlnum(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// Upstream is the text of everything earlier than id in conv, in the
+// conversation's order -- the one definition of "earlier turn" that both
+// read and thread fold against. A message not in conv has no upstream.
+func Upstream(conv []mail.Message, id string) string {
+	var b strings.Builder
+	for _, m := range conv {
+		if m.ID == id {
+			return b.String()
+		}
+		b.WriteString("\n")
+		b.WriteString(Text(m.Body.HTML, m.Body.Text))
+	}
+	return ""
 }
 
 // Build renders messages (ascending) as a transcript, one turn each.

@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,6 +21,7 @@ func TestParseQuery_PortableGrammar(t *testing.T) {
 		{"subject quoted", `subject:"two words"`, func(c Criteria) bool { return len(c.SubjectTerms) == 1 && c.SubjectTerms[0] == "two words" }, false},
 		{"has attachment", `has:attachment`, func(c Criteria) bool { return c.HasAttachment }, false},
 		{"absolute dates", `after:2026/08/01 before:2026-08-10`, func(c Criteria) bool { return c.After.Day() == 1 && c.Before.Day() == 10 }, false},
+		{"operators are case-insensitive", `After:2026/08/01 Newer_Than:2d`, func(c Criteria) bool { return c.After.Equal(now.AddDate(0, 0, -2)) && c.Before.IsZero() }, false},
 		{"newer_than anchors on now", `newer_than:7d`, func(c Criteria) bool { return c.After.Equal(now.AddDate(0, 0, -7)) }, false},
 		{"older_than", `older_than:1m`, func(c Criteria) bool { return c.Before.Before(now.AddDate(0, 0, -29)) }, false},
 		{"unknown operator is an error", `label:inbox`, nil, true},
@@ -114,5 +116,18 @@ func TestParseDate_AlwaysZoned(t *testing.T) {
 	}
 	if _, err := ParseDate("not a date"); err == nil {
 		t.Error("garbage should fail, not silently zero")
+	}
+}
+
+func TestPrepared_BytesCannotBeMutatedAfterReview(t *testing.T) {
+	p, err := NewPrepared(strings.NewReader("From: a@b.c\r\nTo: d@e.f\r\nSubject: hi\r\n\r\nbody\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := p.Bytes()
+	b[0] = 'X'
+	again, _ := NewPrepared(p.Reader())
+	if again.Digest() != p.Digest() || p.Header("From") != "a@b.c" {
+		t.Fatal("a caller's write to Bytes() changed what would be sent")
 	}
 }

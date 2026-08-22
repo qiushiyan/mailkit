@@ -33,8 +33,9 @@ func NewPrepared(r io.Reader) (*Prepared, error) {
 	return &Prepared{raw: raw, digest: hex.EncodeToString(sum[:])}, nil
 }
 
-// Bytes is the message exactly as prepared.
-func (p *Prepared) Bytes() []byte { return p.raw }
+// Bytes is the message exactly as prepared. It is a copy: what was reviewed
+// cannot be changed through the value handed out.
+func (p *Prepared) Bytes() []byte { return bytes.Clone(p.raw) }
 
 // Reader streams the message.
 func (p *Prepared) Reader() io.Reader { return bytes.NewReader(p.raw) }

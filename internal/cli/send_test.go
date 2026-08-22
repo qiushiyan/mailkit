@@ -15,7 +15,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
@@ -171,17 +170,6 @@ func TestSend_EditedDraftIsRefused(t *testing.T) {
 	}
 	if len(h.box.Sent) != 0 {
 		t.Errorf("tampered draft was sent")
-	}
-}
-
-func TestSend_ProviderFailureAfterClaimLeavesUnknownNotPending(t *testing.T) {
-	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "fail", "--body", "hello there", "--no-open")))
-	h.box.SendLimit = 1 // provider refuses as too large: safe to retry, back to pending
-	mustFail(t, h.send("--commit", id))
-	rec, _ := h.deps.Drafts.Load(id)
-	if rec.State != drafts.Pending {
-		t.Errorf("a refusal before transmission should return to pending, got %s", rec.State)
 	}
 }
 

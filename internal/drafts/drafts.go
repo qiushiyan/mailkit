@@ -253,48 +253,70 @@ func (s Store) Open(r Record) (*mail.Prepared, error) {
 	return p, nil
 }
 
-// Claim moves a pending draft to sending. It is the single-use lock: a
-// second claim, concurrent or later, fails here before any network I/O.
+// claimWindow is how long the transition lock may exist before it is taken
+// to belong to a process that died mid-transition. The transition is two
+// file operations; anything older is stale.
+const claimWindow = 10 * time.Second
+
+// Claim moves a pending draft to sending. The record's state is the
+// single-use token; the lock file only serialises the read-modify-write so
+// two concurrent commits cannot both see "pending". A process that dies
+// after claiming leaves the record in sending, and the next claim reports
+// that as an unknown outcome rather than retrying it.
 func (s Store) Claim(id string) (Record, error) {
 	lock := filepath.Join(s.Dir, id+".lock")
 	fh, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return Record{}, fmt.Errorf("draft %s is already being sent or was sent; drafts are single-use", id)
+		if st, statErr := os.Stat(lock); statErr == nil && time.Since(st.ModTime()) > claimWindow {
+			os.Remove(lock)
+			fh, err = os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+		if err != nil {
+			return Record{}, fmt.Errorf("draft %s is being sent by another process right now", id)
+		}
 	}
 	fh.Close()
+	defer os.Remove(lock)
 	r, err := s.Load(id)
 	if err != nil {
-		os.Remove(lock)
 		return Record{}, err
 	}
-	if r.State != Pending {
-		os.Remove(lock)
-		switch r.State {
-		case Sent:
-			return Record{}, fmt.Errorf("draft %s already sent at %s; drafts are single-use", id, r.SentAt.Format(time.RFC3339))
-		case Unknown:
-			return Record{}, fmt.Errorf("draft %s is in an unknown state: the provider may have accepted it. Before re-drafting, check the sent mail for subject %q around %s (Gmail rewrites the Message-ID on send, so search by subject)", id, r.Subject, r.CreatedAt.Format(time.RFC3339))
-		default:
-			return Record{}, fmt.Errorf("draft %s is %s; drafts are single-use", id, r.State)
-		}
+	switch r.State {
+	case Pending:
+	case Sent:
+		return Record{}, fmt.Errorf("draft %s already sent at %s; drafts are single-use", id, r.SentAt.Format(time.RFC3339))
+	case Sending, Unknown:
+		// Sending with no process holding the lock is a send whose outcome
+		// was never recorded: the same thing as unknown.
+		return Record{}, fmt.Errorf("draft %s is in an unknown state: the provider may have accepted it. Before re-drafting, check the sent mail for subject %q around %s (Gmail rewrites the Message-ID on send, so search by subject)", id, r.Subject, r.CreatedAt.Format(time.RFC3339))
+	default:
+		return Record{}, fmt.Errorf("draft %s is %s; drafts are single-use", id, r.State)
 	}
 	r.State = Sending
 	if err := s.write(r); err != nil {
-		os.Remove(lock)
 		return Record{}, err
 	}
 	return r, nil
 }
 
-// Finish records the outcome of a claimed send.
+// Release returns a claimed draft to pending: nothing was transmitted, so
+// the draft can be committed again once the reason is fixed.
+func (s Store) Release(r Record, reason error) error {
+	r.State, r.Error = Pending, reason.Error()
+	return s.write(r)
+}
+
+// Finish records the outcome of a claimed send. A provider that refused the
+// message before accepting any of it (too large, not authenticated) leaves
+// the draft pending; any other failure is an unknown outcome, because the
+// bytes may have left.
 func (s Store) Finish(r Record, providerID, sentAs string, sendErr error, now time.Time) error {
-	if sendErr == nil {
+	switch {
+	case sendErr == nil:
 		r.State, r.SentAt, r.SentAs, r.ProviderID = Sent, now, sentAs, providerID
-	} else if errors.Is(sendErr, mail.ErrTooLarge) || errors.Is(sendErr, mail.ErrAuth) {
-		// Refused before anything left: safe to retry after fixing.
-		r.State, r.Error = Pending, sendErr.Error()
-		os.Remove(filepath.Join(s.Dir, r.ID+".lock"))
-	} else {
+	case errors.Is(sendErr, mail.ErrTooLarge) || errors.Is(sendErr, mail.ErrAuth):
+		return s.Release(r, sendErr)
+	default:
 		r.State, r.Error = Unknown, sendErr.Error()
 	}
 	return s.write(r)

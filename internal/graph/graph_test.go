@@ -3,13 +3,16 @@ package graph_test
 import (
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +31,8 @@ type cassette struct {
 	item     map[string]any
 	requests []*http.Request
 	sendBody string
+	// pageSize, when set, overrides $top so paging is exercised on a small fixture.
+	pageSize int
 }
 
 func load(t *testing.T, name string, v any) {
@@ -51,6 +56,17 @@ func newCassette(t *testing.T) (*cassette, *graph.Mailbox) {
 	box := graph.New(srv.Client())
 	box.BaseURL = srv.URL
 	return c, box
+}
+
+func atts(m map[string]any) []map[string]any {
+	raw, _ := m["attachments"].([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, a := range raw {
+		if am, ok := a.(map[string]any); ok {
+			out = append(out, am)
+		}
+	}
+	return out
 }
 
 func str(m map[string]any, k string) string {
@@ -164,7 +180,26 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if out == nil {
 			out = []map[string]any{}
 		}
-		writeJSON(map[string]any{"value": out})
+		size := c.pageSize
+		if size == 0 {
+			size, _ = strconv.Atoi(q.Get("$top"))
+		}
+		if size <= 0 {
+			size = 10
+		}
+		skip, _ := strconv.Atoi(q.Get("$skiptoken"))
+		page := map[string]any{"value": []map[string]any{}}
+		if skip < len(out) {
+			page["value"] = out[skip:min(skip+size, len(out))]
+		}
+		if skip+size < len(out) {
+			next := *r.URL
+			nq := next.Query()
+			nq.Set("$skiptoken", strconv.Itoa(skip+size))
+			next.RawQuery = nq.Encode()
+			page["@odata.nextLink"] = "http://" + r.Host + next.String()
+		}
+		writeJSON(page)
 	case path == "/me/sendMail":
 		b, _ := io.ReadAll(r.Body)
 		c.sendBody = string(b)
@@ -184,12 +219,41 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Write([]byte("%PDF-1.7 fake"))
 	case strings.Contains(path, "/attachments/"):
-		writeJSON(c.item)
+		attID, _ := url.PathUnescape(path[strings.LastIndex(path, "/")+1:])
+		if attID == str(c.item, "id") {
+			writeJSON(c.item)
+			return
+		}
+		for _, m := range c.messages {
+			for _, a := range atts(m) {
+				if str(a, "id") == attID {
+					writeJSON(a)
+					return
+				}
+			}
+		}
+		http.Error(w, `{"error":{"code":"ErrorItemNotFound","message":"not found"}}`, 404)
 	case strings.HasPrefix(path, "/me/messages/"):
 		id, _ := url.PathUnescape(strings.TrimPrefix(path, "/me/messages/"))
 		for _, m := range c.messages {
 			if str(m, "id") == id {
-				writeJSON(m)
+				// The adapter's $expand selects base properties only; Graph
+				// returns nothing else, so a referenceAttachment's sourceUrl
+				// is absent here and needs its own GET.
+				projected := map[string]any{}
+				maps.Copy(projected, m)
+				var stripped []map[string]any
+				for _, a := range atts(m) {
+					b := map[string]any{}
+					for k, v := range a {
+						if k != "sourceUrl" {
+							b[k] = v
+						}
+					}
+					stripped = append(stripped, b)
+				}
+				projected["attachments"] = stripped
+				writeJSON(projected)
 				return
 			}
 		}
@@ -209,7 +273,7 @@ func TestGraph_Contract(t *testing.T) {
 	})
 }
 
-func TestGraph_ThreeAttachmentKindsAndEmbeddedRecursion(t *testing.T) {
+func TestGraph_ThreeAttachmentKindsAndOneLevelOfEmbedding(t *testing.T) {
 	_, box := newCassette(t)
 	m, err := box.Fetch(t.Context(), "AAMkAGI1-first")
 	if err != nil {
@@ -300,8 +364,8 @@ func TestGraph_SendPostsPreparedBytesAsMIME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "<x@mailkit>" {
-		t.Errorf("send should return the Message-ID as the handle, got %q", id)
+	if id != "" {
+		t.Errorf("MIME sendMail returns 202 and no id; inventing one misleads recovery, got %q", id)
 	}
 	raw, err := base64.StdEncoding.DecodeString(c.sendBody)
 	if err != nil || string(raw) != string(p.Bytes()) {
@@ -320,5 +384,74 @@ func TestGraph_TextBodyComesBackAsText(t *testing.T) {
 	}
 	if m.ProviderFolded != nil {
 		t.Error("null uniqueBody must be nil")
+	}
+}
+
+// Rule: Search is exact -- limit hits or exhaustion, never a silently
+// truncated page walk.
+func TestGraph_SearchPagesUntilLimitOrExhaustion(t *testing.T) {
+	c, box := newCassette(t)
+	c.pageSize = 1
+	before := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	// "office move" is in two messages; the newer (10:30) fails the bound
+	// and sits on the first page alone.
+	hits, err := box.Search(t.Context(), mail.Criteria{Phrases: []string{"office move"}, Before: before}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ID != "AAMkAGI1-first" {
+		t.Fatalf("want the 09:00 message alone, got %+v", hits)
+	}
+}
+
+func TestGraph_SearchThatCannotFillRefusesToPretend(t *testing.T) {
+	c, box := newCassette(t)
+	c.pageSize = 50
+	second := c.messages[1]
+	for i := range 1200 {
+		clone := map[string]any{}
+		maps.Copy(clone, second)
+		clone["id"] = fmt.Sprintf("clone-%04d", i)
+		c.messages = append(c.messages, clone)
+	}
+	// Every clone is at 10:30; a local bound before 10:00 rejects all of them.
+	_, err := box.Search(t.Context(), mail.Criteria{Phrases: []string{"printers"}, Before: time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)}, 5)
+	if err == nil || !strings.Contains(err.Error(), "narrow") {
+		t.Fatalf("scanning past the cap must be an error that says to narrow the query, got %v", err)
+	}
+}
+
+func TestGraph_ConversationFollowsEveryPage(t *testing.T) {
+	c, box := newCassette(t)
+	c.pageSize = 1
+	msgs, err := box.Conversation(t.Context(), "AAQkAGI1-conv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("conversation has 2 messages across 2 pages, got %d", len(msgs))
+	}
+}
+
+func TestGraph_NestedEmbeddedMessageIsExpandedOrMarkedTruncated(t *testing.T) {
+	c, box := newCassette(t)
+	item := c.item["item"].(map[string]any)
+	item["attachments"] = []any{map[string]any{
+		"@odata.type": "#microsoft.graph.itemAttachment", "id": "nested-1", "name": "RE: Lease terms", "contentType": "message/rfc822", "size": 2048,
+	}}
+	m, err := box.Fetch(t.Context(), "AAMkAGI1-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range m.Parts {
+		e, ok := p.Content.(mail.EmbeddedPart)
+		if !ok {
+			continue
+		}
+		for _, inner := range e.Item.Parts {
+			if ie, ok := inner.Content.(mail.EmbeddedPart); ok && ie.Item == nil && !ie.Truncated {
+				t.Fatalf("a nested embedded message that was not fetched must say so: %+v", inner)
+			}
+		}
 	}
 }

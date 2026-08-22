@@ -63,10 +63,14 @@ func TestRead_EmbeddedMessageBodyIsInTheOutput(t *testing.T) {
 	outer := msg("outer", "co", day(1), "a@example.com", "FW: see attached", para("Forwarding the approval as an attachment rather than inline."))
 	outer.Parts = []mail.Part{{Name: "Budget approval", MIME: "message/rfc822", Content: mail.EmbeddedPart{Item: &inner}}}
 	outer.HasAttachments = true
-	rows := mustOK(t, newHarness(t, outer).find("read", "outer")).jsonList(t, "attachments")
+	h := newHarness(t, outer)
+	rows := mustOK(t, h.find("read", "outer")).jsonList(t, "attachments")
 	emb, _ := rows[0]["embedded"].(map[string]any)
 	if emb == nil || !strings.Contains(emb["body"].(string), innerText) || emb["from"] != "boss@corp.example" {
 		t.Fatalf("embedded message body must be in attachments[0].embedded: %v", rows[0])
+	}
+	if text := mustOK(t, h.find("read", "outer", "--text")).stdout; !strings.Contains(text, innerText) {
+		t.Fatalf("--text must carry the embedded body too:\n%s", text)
 	}
 }
 

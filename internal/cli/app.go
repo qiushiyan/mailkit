@@ -334,7 +334,7 @@ func (a *app) readCmd() *cobra.Command {
 			}
 			for _, p := range msg.Parts {
 				if e, ok := p.Content.(mail.EmbeddedPart); ok && e.Item != nil {
-					out.NextSteps = append(out.NextSteps, fmt.Sprintf("attachment %q is an embedded message from %s: %q -- its text is in attachments[].embedded; it is not quoted in the body", p.Name, e.Item.From, e.Item.Subject))
+					out.NextSteps = append(out.NextSteps, fmt.Sprintf("attachment %q is an embedded message from %s: %q -- its text is in attachments[].embedded (after the attachment line with --text); it is not quoted in the body", p.Name, e.Item.From, e.Item.Subject))
 				}
 			}
 
@@ -355,6 +355,9 @@ func (a *app) readCmd() *cobra.Command {
 					tag += " [" + p.Kind + "]"
 				}
 				a.printf("%-9s %s (%s)%s\n", "Attach", p.Name, drafts.HumanSize(p.Size), tag)
+				if e := p.Embedded; e != nil {
+					a.printf("\n--- embedded message: %s\n    From: %s\n    Date: %s\n    Subject: %s\n\n%s\n--- end embedded message\n", p.Name, e.From, e.Date, e.Subject, e.Body)
+				}
 			}
 			for _, img := range out.RemoteImages {
 				if img.Error != "" {

@@ -75,8 +75,10 @@ func FoldOne(body, pool, providerFolded string) (said string, quotedChars int, m
 }
 
 // prefixEnd returns the byte offset in body just past the text that prefix
-// covers, comparing only letters and digits, case-folded. ok is false when
-// prefix is not a prefix of body in that sense, or is empty.
+// covers, comparing only letters and digits, case-folded, then carrying
+// on through the punctuation that closes the spoken text, up to the end of
+// its line. ok is false when prefix is not a prefix of body in that sense,
+// or is empty.
 func prefixEnd(body, prefix string) (int, bool) {
 	want := []rune(normaliseTight(prefix))
 	if len(want) == 0 {
@@ -92,7 +94,15 @@ func prefixEnd(body, prefix string) (int, bool) {
 		}
 		i++
 		if i == len(want) {
-			return pos + utf8.RuneLen(r), true
+			end := pos + utf8.RuneLen(r)
+			for end < len(body) {
+				r, n := utf8.DecodeRuneInString(body[end:])
+				if isAlnum(r) || r == '\n' || r == '\r' {
+					break
+				}
+				end += n
+			}
+			return end, true
 		}
 	}
 	return 0, false

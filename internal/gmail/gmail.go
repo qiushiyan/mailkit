@@ -97,8 +97,9 @@ func (m *Mailbox) Resolve(ctx context.Context, id mail.MessageID) (mail.Envelope
 	return envelope(msg), nil
 }
 
-// compile turns Criteria into Gmail's own query syntax. Gmail can express
-// every field, so the adapter never narrows locally.
+// compile turns Criteria into Gmail's own query syntax. Every field is
+// expressed, as the coarse request; Search narrows the fields whose Gmail
+// meaning is looser than the port's.
 func compile(c mail.Criteria) string {
 	var parts []string
 	for _, p := range c.Phrases {

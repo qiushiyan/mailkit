@@ -186,6 +186,9 @@ func TestThread_ProviderFoldedIsVerifiedNotTrusted(t *testing.T) {
 	if strings.Contains(tr.Turns[1].Said, tail) || tr.Turns[1].QuoteMarker != "provider" {
 		t.Errorf("verified provider fold should be used: marker=%q said=%q", tr.Turns[1].QuoteMarker, tr.Turns[1].Said)
 	}
+	if !strings.HasSuffix(tr.Turns[1].Said, "prose line.") {
+		t.Errorf("the boundary must keep the spoken text's own punctuation: %q", tr.Turns[1].Said)
+	}
 }
 
 func TestThread_RawContainsEveryBodyAsSent(t *testing.T) {

@@ -234,7 +234,9 @@ func compile(c mail.Criteria) plan {
 	if len(search) > 0 {
 		q.Set("$search", strings.Join(search, " AND "))
 		// Everything else narrows locally.
-		p.local = mail.Criteria{From: c.From, To: c.To, HasAttachment: c.HasAttachment, After: c.After, Before: c.Before}
+		// KQL stems and tokenises subject terms; the port's subject match
+		// is a substring, so the terms are checked again here.
+		p.local = mail.Criteria{SubjectTerms: c.SubjectTerms, From: c.From, To: c.To, HasAttachment: c.HasAttachment, After: c.After, Before: c.Before}
 		return p
 	}
 	var filters []string
@@ -321,19 +323,29 @@ func (m *Mailbox) fetch(ctx context.Context, op, id string) (mail.Message, error
 	if err != nil {
 		return mail.Message{}, &mail.ProviderError{Provider: providerName, Op: op, Err: err}
 	}
+	if err := m.complete(ctx, op, msg, &out); err != nil {
+		return mail.Message{}, err
+	}
+	return out, nil
+}
+
+// complete fills the parts of a translated message that the listing
+// projection cannot carry; see fetch.
+func (m *Mailbox) complete(ctx context.Context, op string, msg message, out *mail.Message) error {
+	id := msg.ID
 	for i, p := range out.Parts {
 		attPath := "/me/messages/" + url.PathEscape(id) + "/attachments/" + url.PathEscape(msg.Attachments[i].ID)
 		switch p.Content.(type) {
 		case mail.LinkedPart:
 			var a attachment
 			if err := m.do(ctx, op, http.MethodGet, attPath, nil, "", &a); err != nil {
-				return mail.Message{}, err
+				return err
 			}
 			out.Parts[i].Content = mail.LinkedPart{URL: a.SourceURL}
 		case mail.EmbeddedPart:
 			var a attachment
 			if err := m.do(ctx, op, http.MethodGet, attPath+"?$expand=microsoft.graph.itemattachment/item", nil, "", &a); err != nil {
-				return mail.Message{}, err
+				return err
 			}
 			if a.Item == nil {
 				out.Parts[i].Content = mail.EmbeddedPart{Truncated: true}
@@ -341,7 +353,7 @@ func (m *Mailbox) fetch(ctx context.Context, op, id string) (mail.Message, error
 			}
 			inner, err := translate(*a.Item)
 			if err != nil {
-				return mail.Message{}, &mail.ProviderError{Provider: providerName, Op: op, Err: err}
+				return &mail.ProviderError{Provider: providerName, Op: op, Err: err}
 			}
 			for j, ip := range inner.Parts {
 				if _, ok := ip.Content.(mail.EmbeddedPart); ok {
@@ -351,7 +363,7 @@ func (m *Mailbox) fetch(ctx context.Context, op, id string) (mail.Message, error
 			out.Parts[i].Content = mail.EmbeddedPart{Item: &inner}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Message, error) {
@@ -372,6 +384,9 @@ func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Messa
 			t, err := translate(msg)
 			if err != nil {
 				return nil, &mail.ProviderError{Provider: providerName, Op: "conversation", Err: err}
+			}
+			if err := m.complete(ctx, "conversation", msg, &t); err != nil {
+				return nil, err
 			}
 			out = append(out, t)
 		}

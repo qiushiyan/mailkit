@@ -137,7 +137,9 @@ func (c *cassette) searchMatch(m map[string]any, search string) bool {
 		case strings.HasPrefix(term, "(subject:"):
 			ok := false
 			for alt := range strings.SplitSeq(strings.Trim(term, "()"), " OR ") {
-				ok = ok || strings.Contains(subject, strings.ToLower(strings.Trim(strings.TrimPrefix(alt, "subject:"), `"`)))
+				// KQL matches word stems: subject:"moves" finds "move".
+				term := strings.TrimSuffix(strings.ToLower(strings.Trim(strings.TrimPrefix(alt, "subject:"), `"`)), "s")
+				ok = ok || strings.Contains(subject, term)
 			}
 			if !ok {
 				return false
@@ -430,6 +432,30 @@ func TestGraph_ConversationFollowsEveryPage(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("conversation has 2 messages across 2 pages, got %d", len(msgs))
+	}
+	// Parts are completed the same way Fetch completes them.
+	for _, p := range msgs[0].Parts {
+		switch c := p.Content.(type) {
+		case mail.LinkedPart:
+			if c.URL == "" {
+				t.Errorf("conversation lost the cloud link's URL: %+v", p)
+			}
+		case mail.EmbeddedPart:
+			if c.Item == nil && !c.Truncated {
+				t.Errorf("conversation left an embedded message neither expanded nor truncated: %+v", p)
+			}
+		}
+	}
+}
+
+func TestGraph_SubjectTermsAreNarrowedLocallyNotLeftToKQL(t *testing.T) {
+	_, box := newCassette(t)
+	hits, err := box.Search(t.Context(), mail.Criteria{SubjectTerms: []string{"moves"}}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("KQL's stemmed subject match is not the port's subject match: %+v", hits)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	gomail "github.com/wneessen/go-mail"
@@ -253,30 +254,24 @@ func (s Store) Open(r Record) (*mail.Prepared, error) {
 	return p, nil
 }
 
-// claimWindow is how long the transition lock may exist before it is taken
-// to belong to a process that died mid-transition. The transition is two
-// file operations; anything older is stale.
-const claimWindow = 10 * time.Second
-
 // Claim moves a pending draft to sending. The record's state is the
-// single-use token; the lock file only serialises the read-modify-write so
-// two concurrent commits cannot both see "pending". A process that dies
-// after claiming leaves the record in sending, and the next claim reports
-// that as an unknown outcome rather than retrying it.
+// single-use token; the lock only serialises the read-modify-write so two
+// concurrent commits cannot both see "pending". It is a kernel advisory
+// lock on a file that stays on disk: the kernel releases it when the holder
+// exits, so a process that dies mid-transition cannot hold it, and a live
+// process that merely stalled still owns it -- age says nothing. A process
+// that dies after claiming leaves the record in sending, and the next claim
+// reports that as an unknown outcome rather than retrying it.
 func (s Store) Claim(id string) (Record, error) {
-	lock := filepath.Join(s.Dir, id+".lock")
-	fh, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	fh, err := os.OpenFile(filepath.Join(s.Dir, id+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		if st, statErr := os.Stat(lock); statErr == nil && time.Since(st.ModTime()) > claimWindow {
-			os.Remove(lock)
-			fh, err = os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		}
-		if err != nil {
-			return Record{}, fmt.Errorf("draft %s is being sent by another process right now", id)
-		}
+		return Record{}, err
 	}
-	fh.Close()
-	defer os.Remove(lock)
+	defer fh.Close()
+	if err := syscall.Flock(int(fh.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return Record{}, fmt.Errorf("draft %s is being sent by another process right now", id)
+	}
+	defer syscall.Flock(int(fh.Fd()), syscall.LOCK_UN)
 	r, err := s.Load(id)
 	if err != nil {
 		return Record{}, err

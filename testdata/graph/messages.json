@@ -1,0 +1,58 @@
+[
+  {
+    "@odata.type": "#microsoft.graph.message",
+    "id": "AAMkAGI1-first",
+    "internetMessageId": "<first.0001@contoso.example>",
+    "conversationId": "AAQkAGI1-conv",
+    "receivedDateTime": "2026-08-10T09:00:00Z",
+    "sentDateTime": "2026-08-10T08:59:58Z",
+    "subject": "Office move on the 20th",
+    "bodyPreview": "Hi all, the office move is confirmed for the 20th.",
+    "hasAttachments": true,
+    "from": {"emailAddress": {"name": "Dana Ops", "address": "dana@contoso.example"}},
+    "toRecipients": [{"emailAddress": {"name": "Qiushi", "address": "qiushi@planlab.example"}}],
+    "ccRecipients": [],
+    "body": {"contentType": "html", "content": "<html><body><div>Hi all, the office move is confirmed for the 20th. Please pack your desk by the evening of the 19th and label every box with your name.</div><div>Parking passes will be reissued on the Monday after.</div></body></html>"},
+    "uniqueBody": {"contentType": "html", "content": "<html><body><div>Hi all, the office move is confirmed for the 20th. Please pack your desk by the evening of the 19th and label every box with your name.</div></body></html>"},
+    "attachments": [
+      {"@odata.type": "#microsoft.graph.fileAttachment", "id": "AAMkAGI1-first-att1", "name": "floorplan.pdf", "contentType": "application/pdf", "size": 2048, "isInline": false, "contentId": null},
+      {"@odata.type": "#microsoft.graph.fileAttachment", "id": "AAMkAGI1-first-att2", "name": "image001.png", "contentType": "image/png", "size": 512, "isInline": true, "contentId": "image001.png@01DC1234.ABCD0000"},
+      {"@odata.type": "#microsoft.graph.referenceAttachment", "id": "AAMkAGI1-first-att3", "name": "Move checklist.xlsx", "contentType": null, "size": 0, "isInline": false, "sourceUrl": "https://contoso-my.sharepoint.example/personal/dana/Documents/Move%20checklist.xlsx"},
+      {"@odata.type": "#microsoft.graph.itemAttachment", "id": "AAMkAGI1-first-att4", "name": "FW: Lease terms", "contentType": null, "size": 8192, "isInline": false}
+    ]
+  },
+  {
+    "@odata.type": "#microsoft.graph.message",
+    "id": "AAMkAGI1-second",
+    "internetMessageId": "<second.0002@planlab.example>",
+    "conversationId": "AAQkAGI1-conv",
+    "receivedDateTime": "2026-08-10T10:30:00Z",
+    "sentDateTime": "2026-08-10T10:29:55Z",
+    "subject": "RE: Office move on the 20th",
+    "bodyPreview": "Thanks Dana. Will the printers move on the same day?",
+    "hasAttachments": false,
+    "from": {"emailAddress": {"name": "Qiushi", "address": "qiushi@planlab.example"}},
+    "toRecipients": [{"emailAddress": {"name": "Dana Ops", "address": "dana@contoso.example"}}],
+    "ccRecipients": [{"emailAddress": {"name": "Facilities", "address": "facilities@contoso.example"}}],
+    "body": {"contentType": "html", "content": "<html><body><div>Thanks Dana. Will the printers move on the same day, or do we keep using the old floor until the end of the week?</div><div><br></div><div style=\"border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm\"><p><b>From:</b> Dana Ops &lt;dana@contoso.example&gt;<br><b>Sent:</b> Monday, August 10, 2026 9:00 AM<br><b>To:</b> Qiushi &lt;qiushi@planlab.example&gt;<br><b>Subject:</b> Office move on the 20th</p></div><div>Hi all, the office move is confirmed for the 20th. Please pack your desk by the evening of the 19th and label every box with your name.</div></body></html>"},
+    "uniqueBody": {"contentType": "html", "content": "<html><body><div>Thanks Dana. Will the printers move on the same day, or do we keep using the old floor until the end of the week?</div></body></html>"},
+    "attachments": []
+  },
+  {
+    "@odata.type": "#microsoft.graph.message",
+    "id": "AAMkAGI1-third",
+    "internetMessageId": "<third.0003@vendor.example>",
+    "conversationId": "AAQkAGI1-other",
+    "receivedDateTime": "2026-08-12T15:00:00Z",
+    "sentDateTime": "2026-08-12T14:59:00Z",
+    "subject": "Invoice 4471 for August",
+    "bodyPreview": "Please find invoice 4471 attached.",
+    "hasAttachments": false,
+    "from": {"emailAddress": {"name": "Vendor Billing", "address": "billing@vendor.example"}},
+    "toRecipients": [{"emailAddress": {"name": "Qiushi", "address": "qiushi@planlab.example"}}],
+    "ccRecipients": [],
+    "body": {"contentType": "text", "content": "Please find invoice 4471 attached. Payment terms are thirty days from the invoice date shown above."},
+    "uniqueBody": null,
+    "attachments": []
+  }
+]

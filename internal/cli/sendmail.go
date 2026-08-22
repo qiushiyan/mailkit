@@ -1,0 +1,186 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/qiushiyan/mailkit/internal/drafts"
+	"github.com/qiushiyan/mailkit/internal/mail"
+)
+
+// SendMail builds the compose/commit command. Composing is always a dry
+// run; --commit takes a draft id, never a fresh set of flags, so the bytes
+// that go out are the bytes that were reviewed.
+func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
+	d.defaults()
+	a := &app{Deps: d, out: out, errOut: errOut}
+	var (
+		commit, bodyFile, body, subject, sender string
+		to, cc, bcc                             string
+		attach                                  []string
+		list, asHTML, noOpen                    bool
+	)
+	root := &cobra.Command{
+		Use:           "send-mail",
+		Short:         "Compose a mail draft (dry run + HTML preview); send only with --commit",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			switch {
+			case list:
+				rows, err := a.Drafts.Recent(30)
+				if err != nil {
+					return err
+				}
+				if len(rows) == 0 {
+					a.printf("no drafts\n")
+					return nil
+				}
+				for _, r := range rows {
+					state := string(r.State)
+					if r.State == drafts.Sent {
+						state = "sent " + r.SentAt.Format("2006-01-02 15:04")
+					}
+					a.printf("%-56s %-8s %-22s -> %s\n", r.ID, r.Account, state, strings.Join(r.To, ", "))
+				}
+				return nil
+
+			case commit != "":
+				rec, err := a.Drafts.Claim(commit)
+				if err != nil {
+					return err
+				}
+				prepared, err := a.Drafts.Open(rec)
+				if err != nil {
+					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrTooLarge, err), a.Now()) // back to pending
+					return err
+				}
+				box, err := a.Open(ctx, rec.Account)
+				if err != nil {
+					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrAuth, err), a.Now())
+					return err
+				}
+				acct, err := box.Account(ctx)
+				if err != nil {
+					_ = a.Drafts.Finish(rec, "", "", fmt.Errorf("%w: %v", mail.ErrAuth, err), a.Now())
+					return err
+				}
+				if prepared.Size() > acct.SendLimit {
+					err := fmt.Errorf("%w: message is %s, over the %s limit for %s; send a share link instead",
+						mail.ErrTooLarge, drafts.HumanSize(prepared.Size()), drafts.HumanSize(acct.SendLimit), rec.Account)
+					_ = a.Drafts.Finish(rec, "", "", err, a.Now())
+					return err
+				}
+				id, sendErr := box.Send(ctx, prepared)
+				if err := a.Drafts.Finish(rec, id, acct.Address, sendErr, a.Now()); err != nil {
+					return err
+				}
+				if sendErr != nil {
+					return sendErr
+				}
+				a.printf("sent as %s -> %s\nsubject: %s\n", acct.Address, strings.Join(rec.To, ", "), rec.Subject)
+				return nil
+
+			default:
+				if subject == "" {
+					return errors.New("--subject is required")
+				}
+				text, err := readBody(bodyFile, body, stdin)
+				if err != nil {
+					return err
+				}
+				box, err := a.Open(ctx, a.account)
+				if err != nil {
+					return err
+				}
+				acct, err := box.Account(ctx)
+				if err != nil {
+					return err
+				}
+				from := acct.Address
+				if sender != "" {
+					from = sender
+				}
+				rec, prepared, err := a.Drafts.Create(drafts.Compose{
+					Account: a.account, From: from, To: split(to), Cc: split(cc), Bcc: split(bcc),
+					Subject: subject, Body: text, HTML: asHTML, Attach: attach,
+				}, a.Now())
+				if err != nil {
+					return err
+				}
+				parsed, err := drafts.Parse(prepared)
+				if err != nil {
+					return err
+				}
+				page := a.Drafts.PreviewPath(rec.ID)
+				if err := os.WriteFile(page, []byte(drafts.RenderPreview(rec, parsed)), 0o600); err != nil {
+					return err
+				}
+				if !noOpen && a.OpenPreview != nil {
+					_ = a.OpenPreview(page)
+				}
+				a.printf("draft   %s\naccount %s (%s)\npreview %s\nsize    %s\n", rec.ID, rec.Account, rec.From, page, drafts.HumanSize(rec.Size))
+				if rec.Size > acct.SendLimit {
+					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", drafts.HumanSize(rec.Size), drafts.HumanSize(acct.SendLimit), a.account)
+				}
+				a.printf("\nnothing has been sent. to send exactly this draft:\n    send-mail --commit %s\n", rec.ID)
+				return nil
+			}
+		},
+	}
+	root.SetOut(out)
+	root.SetErr(errOut)
+	f := root.Flags()
+	f.StringVar(&commit, "commit", "", "send a previously previewed draft by id")
+	f.BoolVar(&list, "list", false, "list recent drafts")
+	f.StringVar(&a.account, "account", "gmail", "which account: "+strings.Join(d.Accounts, "|"))
+	f.StringVarP(&to, "to", "t", "", "comma-separated recipients")
+	f.StringVar(&cc, "cc", "", "")
+	f.StringVar(&bcc, "bcc", "", "")
+	f.StringVarP(&subject, "subject", "s", "", "")
+	f.StringVar(&body, "body", "", "body text inline")
+	f.StringVar(&bodyFile, "body-file", "", "read body from a file, or - for stdin")
+	f.StringArrayVar(&attach, "attach", nil, "attach a file (repeatable)")
+	f.BoolVar(&asHTML, "html", false, "body is HTML, not plain text")
+	f.StringVar(&sender, "sender", "", "send as an alias / send-as address")
+	f.BoolVar(&noOpen, "no-open", false, "do not open the preview")
+	return root
+}
+
+func split(s string) []string {
+	var out []string
+	for part := range strings.SplitSeq(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func readBody(file, inline string, stdin io.Reader) (string, error) {
+	switch {
+	case file == "-":
+		b, err := io.ReadAll(stdin)
+		return string(b), err
+	case file != "":
+		if after, ok := strings.CutPrefix(file, "~/"); ok {
+			home, _ := os.UserHomeDir()
+			file = home + "/" + after
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("body file not found: %s", file)
+		}
+		return string(b), nil
+	case inline != "":
+		return inline, nil
+	}
+	return "", errors.New("give a body with --body or --body-file (use - for stdin)")
+}

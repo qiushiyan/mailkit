@@ -1,0 +1,24 @@
+{
+  "@odata.type": "#microsoft.graph.itemAttachment",
+  "id": "AAMkAGI1-first-att4",
+  "name": "FW: Lease terms",
+  "contentType": null,
+  "size": 8192,
+  "isInline": false,
+  "item": {
+    "@odata.type": "#microsoft.graph.message",
+    "id": "",
+    "internetMessageId": "<lease.0009@landlord.example>",
+    "conversationId": "",
+    "receivedDateTime": "2026-08-01T12:00:00Z",
+    "sentDateTime": "2026-08-01T11:59:00Z",
+    "subject": "Lease terms",
+    "bodyPreview": "The lease runs for five years with a break clause at year three.",
+    "hasAttachments": false,
+    "from": {"emailAddress": {"name": "Landlord", "address": "legal@landlord.example"}},
+    "toRecipients": [{"emailAddress": {"name": "Dana Ops", "address": "dana@contoso.example"}}],
+    "ccRecipients": [],
+    "body": {"contentType": "html", "content": "<html><body><p>The lease runs for five years with a break clause at year three. Rent reviews are upward-only and indexed annually.</p></body></html>"},
+    "attachments": []
+  }
+}

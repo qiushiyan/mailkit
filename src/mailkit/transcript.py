@@ -45,6 +45,8 @@ FORWARD_MARKERS = re.compile(
 
 # The HTML-to-text step renders every link as `text<url>`, which doubles every
 # address and URL in the message.
+# The backreference has no equivalent in Go's RE2; a port matches both sides
+# and compares them in code. See docs/go-migration.md.
 MAILTO_DUP = re.compile(r"([^\s<>]+@[^\s<>]+?)<mailto:\1>", re.I)
 MAILTO_ANY = re.compile(r"([^\s<>]+)<mailto:[^>]+>", re.I)
 LINK_DUP = re.compile(r"([^\s<>]+)<(https?://[^>]+)>")

@@ -19,6 +19,7 @@ opposite case: what it quotes usually is not in the thread, so folding it would
 destroy the only copy. Forwards are therefore left intact.
 """
 
+import html
 import re
 
 # Where a message stops speaking and starts quoting. Ordered: the Outlook
@@ -105,6 +106,12 @@ def tidy(text):
     for banner in BANNERS:
         text = banner.sub("", text)
     text = SEPARATOR_RUN.sub("", text)
+    # Last, so a decoded &lt; cannot manufacture a `text<url>` pattern for the
+    # rules above to act on. A literal "&amp;" written as prose is rewritten
+    # too; that trade is accepted -- entities in mail bodies are escaping
+    # artefacts far more often than they are content.
+    text = html.unescape(text)
+    text = text.replace("\xa0", " ")
     return BLANK_RUN.sub("\n\n", text).strip()
 
 

@@ -312,8 +312,10 @@ func TestTranslate_InlineCIDPartKeysOnAttachmentID(t *testing.T) {
 			t.Errorf("nameless inline part should get a name with an extension, got %q", p.Name)
 		}
 	}
-	if !m.HasAttachments {
-		t.Error("HasAttachments should be true")
+	// Inline images are parts, and fetchable, but not attachments: the
+	// port's HasAttachments means something beyond the rendered body.
+	if m.HasAttachments {
+		t.Error("a message whose only parts are inline images has no attachments")
 	}
 }
 

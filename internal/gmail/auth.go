@@ -56,15 +56,15 @@ func loadConfig() (*oauth2.Config, error) {
 func Client(ctx context.Context) (*http.Client, error) {
 	cfg, err := loadConfig()
 	if err != nil {
-		return nil, &mail.ProviderError{Provider: providerName, Op: "auth", Err: err}
+		return nil, mail.Wrap(providerName, "auth", LoginHint, err)
 	}
 	b, err := os.ReadFile(TokenPath())
 	if err != nil {
-		return nil, &mail.ProviderError{Provider: providerName, Op: "auth", Err: mail.ErrAuth, Hint: LoginHint}
+		return nil, mail.Wrap(providerName, "auth", LoginHint, mail.ErrAuth)
 	}
 	var tok oauth2.Token
 	if err := json.Unmarshal(b, &tok); err != nil {
-		return nil, &mail.ProviderError{Provider: providerName, Op: "auth", Err: mail.ErrAuth, Hint: LoginHint}
+		return nil, mail.Wrap(providerName, "auth", LoginHint, mail.ErrAuth)
 	}
 	src := cfg.TokenSource(ctx, &tok)
 	return oauth2.NewClient(ctx, &savingSource{src: src, path: TokenPath()}), nil

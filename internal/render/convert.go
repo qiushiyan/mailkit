@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	xhtml "golang.org/x/net/html"
+
+	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
 // Rendered is one pass over the HTML: the text, and the images it only
@@ -192,16 +194,17 @@ func (c *converter) text(data string) {
 	}
 }
 
-// Convert renders HTML to text. Quoted history comes back prefixed "> ".
+// Convert renders a body to text, the HTML when there is one. Quoted
+// history comes back prefixed "> ".
 // The tokenizer, not the tree parser, is the primitive: it is the streaming
 // analogue of the parser the rules were calibrated on, and a spike showed
 // the output byte-identical on ten real bodies.
-func Convert(src string) Rendered {
-	if src == "" {
-		return Rendered{}
+func Convert(b mail.Body) Rendered {
+	if b.HTML == "" {
+		return Rendered{Text: strings.TrimSpace(b.Text)}
 	}
 	c := &converter{seen: map[string]bool{}}
-	z := xhtml.NewTokenizer(strings.NewReader(src))
+	z := xhtml.NewTokenizer(strings.NewReader(b.HTML))
 loop:
 	for {
 		switch z.Next() {
@@ -224,11 +227,6 @@ loop:
 	return Rendered{Text: strings.TrimSpace(out), RemoteImages: c.images}
 }
 
-// Text is the body of a message as text: the HTML converted, or the plain
-// part when there was no HTML.
-func Text(html, plain string) string {
-	if html != "" {
-		return Convert(html).Text
-	}
-	return strings.TrimSpace(plain)
-}
+// Text is the body as text: the HTML converted, or the plain part when
+// there was no HTML.
+func Text(b mail.Body) string { return Convert(b).Text }

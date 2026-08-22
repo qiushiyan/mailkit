@@ -182,12 +182,8 @@ func Build(ctx context.Context, box mail.Mailbox, seedID string, o Options) (Res
 	r.Seed.ID, r.Seed.ConversationID, r.Seed.Date = seed.ID, seed.ConversationID, seed.DateHeader
 	r.Seed.From, r.Seed.Subject = seed.From.String(), seed.Subject
 
-	rendered := render.Convert(seed.Body.HTML)
-	text := rendered.Text
-	if seed.Body.HTML == "" {
-		text = seed.Body.Text
-	}
-	haystack := strings.Join([]string{seed.Subject, text, strings.Join(rendered.RemoteImages, " ")}, " ")
+	rendered := render.Convert(seed.Body)
+	haystack := strings.Join([]string{seed.Subject, rendered.Text, strings.Join(rendered.RemoteImages, " ")}, " ")
 	keys := Identifiers(haystack)
 	if len(keys) > MaxIdentifiers {
 		keys = keys[:MaxIdentifiers]

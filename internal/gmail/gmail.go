@@ -31,9 +31,6 @@ const (
 	sendLimit = 25 << 20
 	// fanOut is the parallelism of the per-hit metadata fetch.
 	fanOut = 8
-	// maxScan bounds a narrowing walk: past this many listed messages
-	// without limit exact matches, the query is too broad to answer honestly.
-	maxScan = 1000
 )
 
 // Mailbox is a Gmail account.
@@ -50,27 +47,18 @@ func New(ctx context.Context, client *http.Client, opts ...option.ClientOption) 
 	if err != nil {
 		return nil, err
 	}
-	return &Mailbox{svc: svc, LoginHint: "mail-find auth login"}, nil
+	return &Mailbox{svc: svc, LoginHint: LoginHint}, nil
 }
 
+// wrap labels an error at the public boundary, after mapping Google's
+// status codes to the port's sentinels.
 func (m *Mailbox) wrap(op string, err error) error {
-	if err == nil {
-		return nil
-	}
 	if ge, ok := errors.AsType[*googleapi.Error](err); ok {
-		switch ge.Code {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return &mail.ProviderError{Provider: providerName, Op: op, Err: mail.ErrAuth, Hint: m.LoginHint}
-		case http.StatusNotFound:
-			return &mail.ProviderError{Provider: providerName, Op: op, Err: mail.ErrNotFound}
-		case http.StatusRequestEntityTooLarge:
-			return &mail.ProviderError{Provider: providerName, Op: op, Err: mail.ErrTooLarge}
+		if base := mail.Sentinel(ge.Code); base != nil {
+			err = base
 		}
 	}
-	if errors.Is(err, mail.ErrAuth) {
-		return &mail.ProviderError{Provider: providerName, Op: op, Err: mail.ErrAuth, Hint: m.LoginHint}
-	}
-	return &mail.ProviderError{Provider: providerName, Op: op, Err: err}
+	return mail.Wrap(providerName, op, m.LoginHint, err)
 }
 
 func (m *Mailbox) Account(ctx context.Context) (mail.Account, error) {
@@ -88,7 +76,7 @@ func (m *Mailbox) Resolve(ctx context.Context, id mail.MessageID) (mail.Envelope
 		return mail.Envelope{}, m.wrap("resolve", err)
 	}
 	if len(hits) == 0 {
-		return mail.Envelope{}, &mail.ProviderError{Provider: providerName, Op: "resolve", Err: fmt.Errorf("message-id %s: %w", id, mail.ErrNotFound)}
+		return mail.Envelope{}, m.wrap("resolve", fmt.Errorf("message-id %s: %w", id, mail.ErrNotFound))
 	}
 	msg, err := m.svc.Users.Messages.Get("me", hits[0]).Format("metadata").Context(ctx).Do()
 	if err != nil {
@@ -135,59 +123,43 @@ func compile(c mail.Criteria) string {
 	return strings.Join(parts, " ")
 }
 
-// Search compiles the criteria to one Gmail query and walks the listing,
-// fetching one metadata envelope per hit in parallel -- Gmail's list
-// returns bare ids -- and narrowing locally until it has limit exact
-// matches or the listing is exhausted. Gmail's operators are coarser than
-// the port in two ways the envelope can correct: date operators are
-// day-granular, and from:/to: also match display names. has:attachment is
-// left to Gmail because a metadata envelope cannot see parts, and phrases
-// are its full-text match by design.
+// Search compiles the criteria to one Gmail query and narrows the listing
+// with the port's walk, fetching one metadata envelope per hit in parallel
+// -- Gmail's list returns bare ids. Gmail's operators are coarser than the
+// port in two ways the envelope corrects: date operators are day-granular,
+// and from:/to: also match display names. has:attachment is left to Gmail
+// because a metadata envelope cannot see parts.
 func (m *Mailbox) Search(ctx context.Context, c mail.Criteria, limit int) ([]mail.Envelope, error) {
-	if limit <= 0 {
-		limit = 25
-	}
-	local := c
-	local.Phrases, local.HasAttachment = nil, false
+	residual := c
+	residual.HasAttachment = false
 	q := compile(c)
-	var out []mail.Envelope
-	page, scanned := "", 0
-	for {
-		call := m.svc.Users.Messages.List("me").Q(q).MaxResults(int64(min(max(limit, 25), 500))).Context(ctx)
+	page := ""
+	first := true
+	hits, err := mail.Narrow(limit, residual, func() ([]mail.Envelope, bool, error) {
+		if !first && page == "" {
+			return nil, false, nil
+		}
+		first = false
+		call := m.svc.Users.Messages.List("me").Q(q).MaxResults(int64(min(max(limit, mail.DefaultLimit), 500))).Context(ctx)
 		if page != "" {
 			call = call.PageToken(page)
 		}
 		resp, err := call.Do()
 		if err != nil {
-			return nil, m.wrap("search", err)
+			return nil, false, err
 		}
 		ids := make([]string, 0, len(resp.Messages))
 		for _, r := range resp.Messages {
 			ids = append(ids, r.Id)
 		}
 		envs, err := m.envelopes(ctx, ids)
-		if err != nil {
-			return nil, m.wrap("search", err)
-		}
-		for _, e := range envs {
-			scanned++
-			if !local.IsZero() && !local.Match(e, "") {
-				continue
-			}
-			out = append(out, e)
-			if len(out) >= limit {
-				return out, nil
-			}
-		}
-		if resp.NextPageToken == "" {
-			return out, nil
-		}
-		if scanned >= maxScan {
-			return nil, &mail.ProviderError{Provider: providerName, Op: "search",
-				Err: fmt.Errorf("scanned %d messages and found %d matches; narrow the query (tighter dates, from:, subject:)", scanned, len(out))}
-		}
 		page = resp.NextPageToken
+		return envs, page != "", err
+	})
+	if err != nil {
+		return nil, m.wrap("search", err)
 	}
+	return hits, nil
 }
 
 // listIDs returns up to limit ids for a query in Gmail's own semantics --
@@ -256,11 +228,7 @@ func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Messa
 		out = append(out, message(msg))
 	}
 	// threads.get already returns ascending; sort defensively anyway.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].Received.Before(out[j-1].Received); j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
+	mail.SortByReceived(out)
 	return out, nil
 }
 
@@ -269,7 +237,7 @@ func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Messa
 func (m *Mailbox) Open(ctx context.Context, h mail.Handle, w io.Writer) error {
 	msgID, attID, ok := strings.Cut(string(h), "/")
 	if !ok {
-		return &mail.ProviderError{Provider: providerName, Op: "open", Err: fmt.Errorf("handle %q: %w", h, mail.ErrNoBytes)}
+		return m.wrap("open", fmt.Errorf("handle %q: %w", h, mail.ErrNoBytes))
 	}
 	body, err := m.svc.Users.Messages.Attachments.Get("me", msgID, attID).Context(ctx).Do()
 	if err != nil {
@@ -285,7 +253,7 @@ func (m *Mailbox) Open(ctx context.Context, h mail.Handle, w io.Writer) error {
 
 func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared) (string, error) {
 	if p.Size() > sendLimit {
-		return "", &mail.ProviderError{Provider: providerName, Op: "send", Err: mail.ErrTooLarge}
+		return "", m.wrap("send", mail.ErrTooLarge)
 	}
 	sent, err := m.svc.Users.Messages.Send("me", &gm.Message{
 		Raw: base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(p.Bytes()),
@@ -402,7 +370,7 @@ func message(msg *gm.Message) mail.Message {
 			out.Body.Text = decodeBody(p.Body.Data)
 		}
 	}
-	out.HasAttachments = len(out.Parts) > 0
+	out.HasAttachments = mail.HasAttachments(out.Parts)
 	return out
 }
 

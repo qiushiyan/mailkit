@@ -25,7 +25,7 @@ func TestMemory_Contract(t *testing.T) {
 	second := mk("m2", "c1", at.Add(time.Hour), "me@example.com", "Re: Flat 819", "<p>Thanks, received.</p>")
 	third := mk("m3", "c2", at.AddDate(0, 0, 3), "news@other.org", "Newsletter", "<p>Unrelated newsletter content.</p>")
 	box := memory.New(first, second, third)
-	box.TextOf = func(m mail.Message) string { return render.Text(m.Body.HTML, m.Body.Text) }
+	box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }
 	box.Store("m1/att1", []byte("%PDF-1.4"))
 	mailtest.Run(t, box, mailtest.Scenario{
 		Address: "me@example.com", MessageID: "m1", RFC822ID: "m1@example.test", Conversation: "c1", ConversationSize: 2,

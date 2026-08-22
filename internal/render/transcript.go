@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"github.com/qiushiyan/mailkit/internal/norm"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -11,18 +12,23 @@ import (
 
 // Turn is one message's contribution to a transcript.
 type Turn struct {
-	ID          string `json:"id"`
-	Date        string `json:"date"`
-	From        string `json:"from"`
-	To          string `json:"to,omitempty"`
-	Subject     string `json:"subject"`
-	Said        string `json:"said"`
-	QuotedChars int    `json:"quoted_chars"`
+	ID      string `json:"id"`
+	Date    string `json:"date"`
+	From    string `json:"from"`
+	To      string `json:"to,omitempty"`
+	Subject string `json:"subject"`
+	Said    string `json:"said"`
+	Fold
+	Attachments []PartSummary `json:"attachments"`
+}
+
+// Fold is what the quote fold did to one message.
+type Fold struct {
+	QuotedChars int    `json:"quoted_chars,omitempty"`
 	QuoteMarker string `json:"quote_marker,omitempty"`
 	// FoldRejected records why a detected quote was kept: the check found
 	// its prose was not upstream, so folding would have destroyed it.
-	FoldRejected string        `json:"fold_rejected,omitempty"`
-	Attachments  []PartSummary `json:"attachments"`
+	FoldRejected string `json:"fold_rejected,omitempty"`
 }
 
 // PartSummary is the attachment line a transcript shows.
@@ -51,7 +57,7 @@ type Transcript struct {
 // providerFolded is the provider's own quote-stripped text, when it offers
 // one. It is a candidate boundary, verified the same way: its removed tail
 // must exist in the pool too.
-func FoldOne(body, pool, providerFolded string) (said string, quotedChars int, marker, rejected string) {
+func FoldOne(body, pool, providerFolded string) (said string, f Fold) {
 	spoken, quoted, marker := Split(body)
 	if quoted == "" && providerFolded != "" {
 		// Our markers found nothing but the provider removed something.
@@ -64,75 +70,55 @@ func FoldOne(body, pool, providerFolded string) (said string, quotedChars int, m
 		}
 	}
 	if quoted == "" {
-		return Tidy(spoken), 0, marker, ""
+		return Tidy(spoken), Fold{QuoteMarker: marker}
 	}
 	ratio, n := Coverage(quoted, pool)
 	if ratio < FoldCoverage {
-		return Tidy(body), 0, marker,
-			fmt.Sprintf("kept: %d%% of %d quoted lines are not in earlier turns", int(ratio*100), n)
+		return Tidy(body), Fold{QuoteMarker: marker,
+			FoldRejected: fmt.Sprintf("kept: %d%% of %d quoted lines are not in earlier turns", int(ratio*100), n)}
 	}
-	return Tidy(spoken), len(quoted), marker, ""
+	return Tidy(spoken), Fold{QuotedChars: len(quoted), QuoteMarker: marker}
 }
 
 // prefixEnd returns the byte offset in body just past the text that prefix
-// covers, comparing only letters and digits, case-folded, then carrying
-// on through the punctuation that closes the spoken text, up to the end of
-// its line. ok is false when prefix is not a prefix of body in that sense,
-// or is empty.
+// covers in normalised terms, carried on through the punctuation that
+// closes the spoken line. ok is false when prefix is empty or is not a
+// prefix of body.
 func prefixEnd(body, prefix string) (int, bool) {
-	want := []rune(normaliseTight(prefix))
-	if len(want) == 0 {
+	fb, ends := norm.Fold(body)
+	fp := norm.Text(prefix)
+	if fp == "" || !strings.HasPrefix(fb, fp) {
 		return 0, false
 	}
-	i := 0
-	for pos, r := range body {
-		if !isAlnum(r) {
-			continue
+	end := ends[len(fp)-1]
+	for end < len(body) {
+		r, n := utf8.DecodeRuneInString(body[end:])
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\n' || r == '\r' {
+			break
 		}
-		if unicode.ToLower(r) != want[i] {
-			return 0, false
-		}
-		i++
-		if i == len(want) {
-			end := pos + utf8.RuneLen(r)
-			for end < len(body) {
-				r, n := utf8.DecodeRuneInString(body[end:])
-				if isAlnum(r) || r == '\n' || r == '\r' {
-					break
-				}
-				end += n
-			}
-			return end, true
-		}
+		end += n
 	}
-	return 0, false
+	return end, true
 }
 
-func isAlnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
-
-func normaliseTight(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if isAlnum(r) {
-			b.WriteRune(unicode.ToLower(r))
+// Read folds one message the way Build folds it as a turn of conv: against
+// everything earlier in the conversation's order. A message not in conv
+// has no upstream, so nothing is folded.
+func Read(msg mail.Message, conv []mail.Message) (said string, f Fold) {
+	for i := range conv {
+		if conv[i].ID == msg.ID {
+			turn := Build(conv[:i+1]).Turns[i]
+			return turn.Said, turn.Fold
 		}
 	}
-	return b.String()
+	return FoldOne(Text(msg.Body), "", providerText(msg))
 }
 
-// Upstream is the text of everything earlier than id in conv, in the
-// conversation's order -- the one definition of "earlier turn" that both
-// read and thread fold against. A message not in conv has no upstream.
-func Upstream(conv []mail.Message, id string) string {
-	var b strings.Builder
-	for _, m := range conv {
-		if m.ID == id {
-			return b.String()
-		}
-		b.WriteString("\n")
-		b.WriteString(Text(m.Body.HTML, m.Body.Text))
+func providerText(m mail.Message) string {
+	if m.ProviderFolded == nil {
+		return ""
 	}
-	return ""
+	return Text(*m.ProviderFolded)
 }
 
 // Build renders messages (ascending) as a transcript, one turn each.
@@ -140,20 +126,15 @@ func Build(msgs []mail.Message) Transcript {
 	var t Transcript
 	var pool strings.Builder
 	for _, m := range msgs {
-		body := Text(m.Body.HTML, m.Body.Text)
-		var pf string
-		if m.ProviderFolded != nil {
-			pf = Text(m.ProviderFolded.HTML, m.ProviderFolded.Text)
-		}
-		said, quoted, marker, rejected := FoldOne(body, pool.String(), pf)
+		body := Text(m.Body)
+		said, f := FoldOne(body, pool.String(), providerText(m))
 		pool.WriteString("\n")
 		pool.WriteString(body)
 		t.RawChars += len(body)
 		t.TranscriptChars += len(said)
 		t.Turns = append(t.Turns, Turn{
 			ID: m.ID, Date: m.DateHeader, From: m.From.String(), To: mail.Joined(m.To),
-			Subject: m.Subject, Said: said, QuotedChars: quoted, QuoteMarker: marker,
-			FoldRejected: rejected, Attachments: Summaries(m.Parts),
+			Subject: m.Subject, Said: said, Fold: f, Attachments: Summaries(m.Parts),
 		})
 	}
 	t.FoldedChars = t.RawChars - t.TranscriptChars

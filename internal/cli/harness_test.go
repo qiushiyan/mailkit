@@ -29,7 +29,7 @@ type harness struct {
 func newHarness(t *testing.T, msgs ...mail.Message) *harness {
 	t.Helper()
 	box := memory.New(msgs...)
-	box.TextOf = func(m mail.Message) string { return render.Text(m.Body.HTML, m.Body.Text) }
+	box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }
 	dir := t.TempDir()
 	h := &harness{t: t, box: box}
 	h.deps = cli.Deps{

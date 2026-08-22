@@ -251,7 +251,7 @@ func partsOut(parts []mail.Part) []partOut {
 			if c.Item != nil {
 				o.Embedded = &embeddedOut{
 					From: c.Item.From.String(), To: mail.Joined(c.Item.To), Date: c.Item.DateHeader, Subject: c.Item.Subject,
-					Body: render.Text(c.Item.Body.HTML, c.Item.Body.Text), Attachments: partsOut(c.Item.Parts),
+					Body: render.Text(c.Item.Body), Attachments: partsOut(c.Item.Parts),
 				}
 			}
 		}
@@ -262,10 +262,8 @@ func partsOut(parts []mail.Part) []partOut {
 
 type readOut struct {
 	envelopeOut
-	Body         string           `json:"body"`
-	QuotedChars  int              `json:"quoted_chars,omitempty"`
-	QuoteMarker  string           `json:"quote_marker,omitempty"`
-	FoldRejected string           `json:"fold_rejected,omitempty"`
+	Body string `json:"body"`
+	render.Fold
 	Attachments  []partOut        `json:"attachments"`
 	RemoteImages []images.Fetched `json:"remote_images,omitempty"`
 	NextSteps    []string         `json:"next_steps"`
@@ -288,30 +286,15 @@ func (a *app) readCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rendered := render.Convert(msg.Body.HTML)
-			text := rendered.Text
-			if msg.Body.HTML == "" {
-				text = strings.TrimSpace(msg.Body.Text)
-			}
-			out := readOut{envelopeOut: envOut(msg.Envelope), Body: text, Attachments: partsOut(msg.Parts), NextSteps: []string{}}
+			rendered := render.Convert(msg.Body)
+			out := readOut{envelopeOut: envOut(msg.Envelope), Body: rendered.Text, Attachments: partsOut(msg.Parts), NextSteps: []string{}}
 
-			var conv []mail.Message
+			// The conversation is what a fold is verified against and what
+			// the thread pointer counts; a message that has none, or whose
+			// conversation cannot be loaded, is read alone.
+			conv, _ := box.Conversation(ctx, msg.ConversationID)
 			if !raw {
-				// Fold only what is verified to exist upstream. A lone
-				// message has no upstream, so the conversation is loaded
-				// when a boundary is found; if it cannot be, the quote stays.
-				_, quoted, _ := render.Split(text)
-				pf := ""
-				if msg.ProviderFolded != nil {
-					pf = render.Text(msg.ProviderFolded.HTML, msg.ProviderFolded.Text)
-				}
-				pool := ""
-				if quoted != "" || pf != "" {
-					if conv, err = box.Conversation(ctx, msg.ConversationID); err == nil {
-						pool = render.Upstream(conv, msg.ID)
-					}
-				}
-				out.Body, out.QuotedChars, out.QuoteMarker, out.FoldRejected = render.FoldOne(text, pool, pf)
+				out.Body, out.Fold = render.Read(msg, conv)
 			}
 
 			if fetchRemote && len(rendered.RemoteImages) > 0 {
@@ -325,9 +308,6 @@ func (a *app) readCmd() *cobra.Command {
 			// Nudges: each fires only when true, as a runnable command.
 			if !fetchRemote && len(rendered.RemoteImages) > 0 {
 				out.NextSteps = append(out.NextSteps, fmt.Sprintf("%d image(s) referenced by URL, not fetched. To include them: mail-find read %s --fetch-remote", len(rendered.RemoteImages), msg.ID))
-			}
-			if conv == nil && looksLikeReply(msg.Subject) {
-				conv, _ = box.Conversation(ctx, msg.ConversationID)
 			}
 			if len(conv) > 1 {
 				out.NextSteps = append(out.NextSteps, fmt.Sprintf("1 of %d messages in this conversation. For the whole exchange: mail-find thread %s", len(conv), msg.ID))
@@ -388,20 +368,6 @@ func (a *app) readCmd() *cobra.Command {
 	c.Flags().BoolVar(&raw, "raw", false, "the body as converted, with no quote folding or tidying")
 	return c
 }
-
-var replyPrefixes = []string{"re:", "fwd:", "fw:", "aw:"}
-
-func looksLikeReply(subject string) bool {
-	s := strings.ToLower(strings.TrimSpace(subject))
-	for _, p := range replyPrefixes {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// --- resolve ---------------------------------------------------------------
 
 func (a *app) resolveCmd() *cobra.Command {
 	return &cobra.Command{
@@ -472,7 +438,7 @@ func (a *app) threadCmd() *cobra.Command {
 				}
 				rows := make([]rawMsg, 0, len(msgs))
 				for _, m := range msgs {
-					rows = append(rows, rawMsg{envOut(m.Envelope), render.Text(m.Body.HTML, m.Body.Text), partsOut(m.Parts)})
+					rows = append(rows, rawMsg{envOut(m.Envelope), render.Text(m.Body), partsOut(m.Parts)})
 				}
 				if !a.text {
 					return a.emit(map[string]any{"messages": rows})
@@ -574,7 +540,7 @@ func (a *app) attachmentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			remote := render.Convert(msg.Body.HTML).RemoteImages
+			remote := render.Convert(msg.Body).RemoteImages
 			steps := []string{}
 			if len(remote) > 0 {
 				steps = append(steps, fmt.Sprintf("%d image(s) referenced by URL in the body. To fetch them: mail-find read %s --fetch-remote", len(remote), msg.ID))

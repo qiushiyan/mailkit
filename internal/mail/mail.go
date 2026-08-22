@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"slices"
 	"time"
 )
 
@@ -156,6 +158,18 @@ func (p Part) Kind() string {
 	return "unknown"
 }
 
+// HasAttachments is the port's definition once a message's parts are
+// known: at least one part that is not inline. A listing envelope, whose
+// parts are not known, carries the provider's own flag instead.
+func HasAttachments(parts []Part) bool {
+	for _, p := range parts {
+		if !p.Inline {
+			return true
+		}
+	}
+	return false
+}
+
 // Sentinel errors. Adapters wrap them in a *ProviderError.
 var (
 	ErrAuth     = errors.New("not authenticated")
@@ -181,3 +195,54 @@ func (e *ProviderError) Error() string {
 }
 
 func (e *ProviderError) Unwrap() error { return e.Err }
+
+// Wrap labels an error with the provider and operation it came from, once:
+// an error already labelled passes through, so adapters label only at
+// their public boundary. hint is attached when the error is ErrAuth -- it
+// is the command that recovers.
+func Wrap(provider, op, hint string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*ProviderError](err); ok {
+		return err
+	}
+	pe := &ProviderError{Provider: provider, Op: op, Err: err}
+	if errors.Is(err, ErrAuth) {
+		pe.Hint = hint
+	}
+	return pe
+}
+
+// Sentinel is the port error an HTTP status means, or nil when it means
+// none in particular.
+func Sentinel(code int) error {
+	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrAuth
+	case http.StatusNotFound:
+		return ErrNotFound
+	case http.StatusRequestEntityTooLarge:
+		return ErrTooLarge
+	}
+	return nil
+}
+
+// StatusError is the error for a failed HTTP response: the sentinel the
+// status means with the provider's detail attached, or a plain HTTP error.
+func StatusError(code int, detail string) error {
+	base := Sentinel(code)
+	switch {
+	case base == nil:
+		return fmt.Errorf("HTTP %d: %s", code, detail)
+	case detail == "":
+		return base
+	}
+	return fmt.Errorf("%w: %s", base, detail)
+}
+
+// SortByReceived orders messages ascending, stably, as Conversation
+// promises.
+func SortByReceived(ms []Message) {
+	slices.SortStableFunc(ms, func(a, b Message) int { return a.Received.Compare(b.Received) })
+}

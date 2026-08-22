@@ -6,6 +6,7 @@ import (
 
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/norm"
 	"github.com/qiushiyan/mailkit/internal/render"
 )
 
@@ -41,17 +42,7 @@ func structuralLine(line string) bool {
 	return false
 }
 
-func normal(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune(' ')
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}
+func normal(s string) string { return norm.Text(s) }
 
 func TestThread_FoldsOnlyWhatEarlierTurnsAlreadySaid(t *testing.T) {
 	thread := fixtures.Thread(t, fixtures.TenancyThread)
@@ -69,7 +60,7 @@ func TestThread_FoldsOnlyWhatEarlierTurnsAlreadySaid(t *testing.T) {
 	var earlier strings.Builder
 	folded := 0
 	for i, turn := range tr.Turns {
-		raw := render.Text(thread[i].Body.HTML, thread[i].Body.Text)
+		raw := render.Text(thread[i].Body)
 		if turn.QuotedChars > 0 {
 			folded++
 			pool := normal(earlier.String())
@@ -111,7 +102,7 @@ func TestRead_ForwardSurvivesWhole(t *testing.T) {
 	h := newHarness(t, fwd)
 	r := mustOK(t, h.find("read", fwd.ID))
 	body := r.json(t)["body"].(string)
-	raw := render.Text(fwd.Body.HTML, "")
+	raw := render.Text(fwd.Body)
 	if len(body) < len(raw)*9/10 {
 		t.Fatalf("forward was folded: %d of %d chars survived", len(body), len(raw))
 	}
@@ -200,7 +191,7 @@ func TestThread_RawContainsEveryBodyAsSent(t *testing.T) {
 		t.Fatalf("%d messages, want %d", len(rows), len(thread))
 	}
 	for i, m := range thread {
-		if rows[i]["body"].(string) != render.Text(m.Body.HTML, m.Body.Text) {
+		if rows[i]["body"].(string) != render.Text(m.Body) {
 			t.Errorf("message %d body altered under --raw", i)
 		}
 	}

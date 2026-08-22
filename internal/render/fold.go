@@ -1,6 +1,7 @@
 package render
 
 import (
+	"github.com/qiushiyan/mailkit/internal/norm"
 	"html"
 	"regexp"
 	"strings"
@@ -137,16 +138,12 @@ func Coverage(quoted, pool string) (float64, int) {
 	if len(lines) == 0 {
 		return 1, 0
 	}
-	flat := normalise(pool)
+	flat := norm.Text(pool)
 	found := 0
 	for _, l := range lines {
-		if strings.Contains(flat, strings.TrimSpace(normalise(l))) {
+		if strings.Contains(flat, norm.Text(l)) {
 			found++
 		}
 	}
 	return float64(found) / float64(len(lines)), len(lines)
 }
-
-var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
-
-func normalise(s string) string { return nonAlnum.ReplaceAllString(strings.ToLower(s), " ") }

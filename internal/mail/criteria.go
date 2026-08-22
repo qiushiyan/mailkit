@@ -2,7 +2,7 @@ package mail
 
 import (
 	"fmt"
-	"regexp"
+	"github.com/qiushiyan/mailkit/internal/norm"
 	"strconv"
 	"strings"
 	"time"
@@ -20,25 +20,36 @@ type Criteria struct {
 	// From and To are an exact address or a bare domain.
 	From string
 	To   string
-	// HasAttachment requires at least one non-inline stored part.
+	// HasAttachment requires at least one non-inline part (see HasAttachments).
 	HasAttachment bool
 	// After and Before bound Received; zero means unbounded.
 	After  time.Time
 	Before time.Time
 }
 
-// IsZero reports whether no predicate is set.
-func (c Criteria) IsZero() bool {
-	return len(c.Phrases) == 0 && len(c.SubjectTerms) == 0 && c.From == "" &&
-		c.To == "" && !c.HasAttachment && c.After.IsZero() && c.Before.IsZero()
-}
-
 // Match is the definition of "this message matches". text is the message's
 // body as text (any converter); phrases are checked against subject and
 // text after normalisation. The memory adapter is exactly this function
-// over its contents, and an adapter narrowing a coarse provider result uses
-// it too, so the predicate has one home.
+// over its contents, so the predicate has one home.
 func (c Criteria) Match(e Envelope, text string) bool {
+	if !c.MatchEnvelope(e) {
+		return false
+	}
+	if len(c.Phrases) > 0 {
+		doc := norm.Text(e.Subject + " " + text)
+		for _, p := range c.Phrases {
+			if !strings.Contains(doc, norm.Text(p)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// MatchEnvelope is Match without the phrases: every predicate an envelope
+// can answer. An adapter narrowing a coarse provider listing uses it, with
+// the phrases left to the provider's full-text search.
+func (c Criteria) MatchEnvelope(e Envelope) bool {
 	if c.From != "" && !e.From.matchesSelector(c.From) {
 		return false
 	}
@@ -64,10 +75,10 @@ func (c Criteria) Match(e Envelope, text string) bool {
 		return false
 	}
 	if len(c.SubjectTerms) > 0 {
-		subj := normalise(e.Subject)
+		subj := norm.Text(e.Subject)
 		hit := false
 		for _, t := range c.SubjectTerms {
-			if strings.Contains(subj, normalise(t)) {
+			if strings.Contains(subj, norm.Text(t)) {
 				hit = true
 				break
 			}
@@ -76,24 +87,7 @@ func (c Criteria) Match(e Envelope, text string) bool {
 			return false
 		}
 	}
-	if len(c.Phrases) > 0 {
-		doc := normalise(e.Subject + " " + text)
-		for _, p := range c.Phrases {
-			if !strings.Contains(doc, normalise(p)) {
-				return false
-			}
-		}
-	}
 	return true
-}
-
-var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
-
-// normalise lowercases and collapses punctuation so "Order #1623209215" and
-// "order 1623209215" compare equal, and so a phrase match survives the
-// provider's own tokenisation.
-func normalise(s string) string {
-	return " " + strings.TrimSpace(nonAlnum.ReplaceAllString(strings.ToLower(s), " ")) + " "
 }
 
 // Grammar is the portable subset of search syntax the CLI accepts. It is

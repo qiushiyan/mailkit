@@ -63,7 +63,7 @@ func TestLive_FirstContact(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		text := render.Text(m.Body.HTML, m.Body.Text)
+		text := render.Text(m.Body)
 		spoken, quoted, marker := render.Split(text)
 		t.Logf("%q: body %d -> spoken %d, quoted %d, marker=%s", m.Subject, len(text), len(spoken), len(quoted), marker)
 		if quoted == "" && marker == "" && len(text) > 2*len(spoken) {
@@ -74,7 +74,7 @@ func TestLive_FirstContact(t *testing.T) {
 			if m.ProviderFolded == nil {
 				t.Skip("uniqueBody not returned")
 			}
-			theirs := render.Text(m.ProviderFolded.HTML, m.ProviderFolded.Text)
+			theirs := render.Text(*m.ProviderFolded)
 			diff := len(spoken) - len(theirs)
 			if diff < 0 {
 				diff = -diff

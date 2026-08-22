@@ -80,7 +80,7 @@ func credential(interactive bool) (azcore.TokenCredential, azidentity.Authentica
 func Client(ctx context.Context) (*http.Client, error) {
 	cred, _, err := credential(false)
 	if err != nil {
-		return nil, &mail.ProviderError{Provider: providerName, Op: "auth", Err: err}
+		return nil, mail.Wrap(providerName, "auth", LoginHint, err)
 	}
 	return &http.Client{Transport: &bearer{cred: cred, next: http.DefaultTransport}}, nil
 }

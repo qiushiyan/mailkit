@@ -454,22 +454,243 @@ class GmailBackend:
 
 
 class OutlookBackend:
-    """Placeholder. The Graph path is designed but blocked on an Entra app
-    registration in the planlab tenant -- see README, "Outlook status"."""
+    """Microsoft 365 via `m365 request` against Graph.
+
+    Untested against a live mailbox: it is blocked on an Entra app
+    registration in the tenant. Every shape here comes from the Graph
+    reference, so treat the first real run as the test -- docs/operations.md
+    lists what to check.
+
+    Graph differs from Gmail in three ways this class has to absorb:
+      - $search and $filter cannot appear in the same request, so a query is
+        one or the other and the caller may have to narrow locally.
+      - attachments come in three kinds, two of which hold no bytes here:
+        a referenceAttachment is a cloud link, an itemAttachment is a whole
+        embedded message.
+      - the API offers uniqueBody, its own version of quote folding.
+    """
 
     name = "outlook"
-    attachment_limit = 3 * 1024 * 1024  # Graph inlines attachments; ~4 MB request cap
+    # Graph base64-inlines attachments into the send request, which caps out
+    # around 4 MB; Gmail's ceiling is 25 MB.
+    attachment_limit = 3 * 1024 * 1024
+    native_unique_body = True
 
-    def _blocked(self, *_a, **_kw):
-        raise BackendError(
-            "the outlook backend is not wired up yet -- it needs an Entra app "
-            "registration first. Use --account gmail."
-        )
+    GRAPH = "https://graph.microsoft.com/v1.0"
+    _account_cache = None
 
-    account = search = message = attachments = fetch_attachment = send = _blocked
-    html_body = remote_images = fetch_remote = thread = _blocked
-    q_exact = q_from_domain_between = q_subject_tokens = _blocked
-    q_rfc822 = _blocked
+    # -- plumbing ------------------------------------------------------
+    def _request(self, path, file_path=None):
+        cmd = ["m365", "request", "--url", f"{self.GRAPH}{path}", "--output", "json"]
+        if file_path:
+            cmd += ["--filePath", str(file_path)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        except FileNotFoundError:
+            raise BackendError("`m365` not found -- npm i -g @pnp/cli-microsoft365")
+        except subprocess.TimeoutExpired:
+            raise BackendError(f"m365 timed out on {path[:60]}")
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout).strip().splitlines()
+            raise BackendError(detail[-1] if detail else f"m365 exited {r.returncode}")
+        if file_path:
+            return None
+        out = r.stdout.strip()
+        if not out:
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            raise BackendError(f"could not parse m365 output: {out[:200]}")
+
+    def account(self):
+        if self._account_cache is not None:
+            return self._account_cache or None
+        try:
+            r = subprocess.run(["m365", "status", "--output", "json"],
+                               capture_output=True, text=True, timeout=60)
+            data = json.loads(r.stdout or "null")
+        except Exception:
+            return None
+        who = data.get("connectedAs") if isinstance(data, dict) else None
+        self._account_cache = who or ""
+        return self._account_cache or None
+
+    # -- query builders ------------------------------------------------
+    # Prefixed so search() knows which Graph mechanism a query needs; the two
+    # cannot be combined in one request.
+
+    @staticmethod
+    def q_rfc822(message_id):
+        return f"filter:internetMessageId eq '<{message_id.strip('<>')}>'"
+
+    @staticmethod
+    def q_exact(text):
+        return f'search:"{text}"'
+
+    @staticmethod
+    def q_from_domain_between(domain, start, end):
+        return (f"filter:receivedDateTime ge {start:%Y-%m-%dT00:00:00Z} "
+                f"and receivedDateTime le {end:%Y-%m-%dT23:59:59Z}"
+                f"|domain:{domain}")
+
+    @staticmethod
+    def q_subject_tokens(tokens):
+        return "search:" + " OR ".join(f"subject:{t}" for t in tokens)
+
+    # -- reading -------------------------------------------------------
+    SELECT = ("id,internetMessageId,conversationId,receivedDateTime,sentDateTime,"
+              "subject,from,toRecipients,ccRecipients,bodyPreview,hasAttachments")
+
+    def search(self, query, limit=25):
+        """A prefixed query picks the Graph mechanism; a bare one is $search.
+
+        A `|domain:` suffix is narrowed after the fact: Graph's $filter cannot
+        match a sender domain, so the window is asked for and the sender
+        checked here.
+        """
+        local_domain = None
+        if "|domain:" in query:
+            query, local_domain = query.split("|domain:", 1)
+        quote = urllib.parse.quote
+        if query.startswith("filter:"):
+            q = "$filter=" + quote(query[7:], safe=" '")
+        elif query.startswith("search:"):
+            q = "$search=" + quote(query[7:], safe=' "')
+        else:
+            q = "$search=" + quote('"' + query + '"', safe=' "')
+        path = "/me/messages?" + q + f"&$top={limit}&$select={self.SELECT}"
+        data = self._request(path) or {}
+        hits = [self._envelope(m) for m in data.get("value", [])]
+        if local_domain:
+            hits = [h for h in hits if local_domain.lower() in (h.get("from") or "").lower()]
+        return hits[:limit]
+
+    @staticmethod
+    def _addresses(recipients):
+        out = []
+        for r in recipients or []:
+            addr = ((r or {}).get("emailAddress") or {})
+            name, email = addr.get("name"), addr.get("address")
+            out.append(f"{name} <{email}>" if name and name != email else (email or ""))
+        return ", ".join(a for a in out if a)
+
+    def _envelope(self, m):
+        sender = ((m.get("from") or {}).get("emailAddress") or {})
+        return {
+            "id": m.get("id"),
+            "rfc822_id": (m.get("internetMessageId") or "").strip("<>"),
+            "thread_id": m.get("conversationId"),
+            "date": m.get("receivedDateTime") or m.get("sentDateTime"),
+            "from": (f"{sender.get('name')} <{sender.get('address')}>"
+                     if sender.get("name") else sender.get("address")),
+            "to": self._addresses(m.get("toRecipients")),
+            "cc": self._addresses(m.get("ccRecipients")),
+            "subject": m.get("subject"),
+            "snippet": m.get("bodyPreview"),
+            "has_attachments": m.get("hasAttachments"),
+        }
+
+    def message(self, msg_id, include_remote=False):
+        m = self._request(
+            f"/me/messages/{msg_id}?$select={self.SELECT},body,uniqueBody") or {}
+        if not m:
+            raise BackendError(f"no such message: {msg_id}")
+        result = self._envelope(m)
+        body = (m.get("body") or {})
+        html_source = body.get("content") or ""
+        if (body.get("contentType") or "").lower() == "html":
+            result["body"] = html2text.convert(html_source)
+            result["body_html"] = html_source
+        else:
+            result["body"] = html_source
+            result["body_html"] = ""
+        unique = (m.get("uniqueBody") or {}).get("content") or ""
+        # Offered, never trusted: the shared layer still verifies a fold, and
+        # --raw must be able to bypass this exactly as it bypasses ours.
+        result["provider_unique_body"] = (
+            html2text.convert(unique) if unique else None)
+        result["attachments"] = self.attachments(msg_id) if m.get("hasAttachments") else []
+        if include_remote:
+            result["remote_image_urls"] = self.remote_images(msg_id, _html=html_source)
+        return result
+
+    def thread(self, conversation_id, with_bodies=False):
+        data = self._request(
+            f"/me/messages?$filter=conversationId eq '{conversation_id}'"
+            f"&$orderby=receivedDateTime&$top=50&$select={self.SELECT}") or {}
+        out = []
+        for m in data.get("value", []):
+            env = self._envelope(m)
+            env["attachments"] = self.attachments(env["id"]) if m.get("hasAttachments") else []
+            out.append(env)
+        if with_bodies:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                bodies = pool.map(lambda e: self.message(e["id"])["body"], out)
+            for env, body in zip(out, bodies):
+                env["body"] = body
+        return out
+
+    def attachments(self, msg_id, _msg=None):
+        data = self._request(f"/me/messages/{msg_id}/attachments") or {}
+        out = []
+        for a in data.get("value", []):
+            kind = {
+                "#microsoft.graph.fileAttachment": "stored",
+                "#microsoft.graph.referenceAttachment": "cloud_link",
+                "#microsoft.graph.itemAttachment": "embedded_message",
+            }.get(a.get("@odata.type"), "stored")
+            out.append({
+                "id": a.get("id"),
+                "name": _safe_name(a.get("name") or "", "attachment"),
+                "size": a.get("size", 0),
+                "mime_type": a.get("contentType"),
+                "inline": bool(a.get("isInline")),
+                "content_id": a.get("contentId"),
+                "kind": kind,
+                # Only a fileAttachment has bytes to fetch from here.
+                "fetchable": kind == "stored",
+            })
+        return out
+
+    def fetch_attachment(self, msg_id, attachment_id, dest: Path):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        self._request(
+            f"/me/messages/{msg_id}/attachments/{attachment_id}/$value",
+            file_path=dest)
+        return dest.stat().st_size if dest.exists() else 0
+
+    def html_body(self, msg_id, _msg=None):
+        return self.message(msg_id).get("body_html") or ""
+
+    def remote_images(self, msg_id, _msg=None, _html=None):
+        source = _html if _html is not None else self.html_body(msg_id)
+        urls = [u for u in IMG_SRC_RE.findall(source or "")
+                if u.lower().startswith("http")]
+        return list(dict.fromkeys(urls))
+
+    fetch_remote = GmailBackend.fetch_remote
+
+    # -- sending -------------------------------------------------------
+    def send(self, draft):
+        cmd = ["m365", "outlook", "mail", "send",
+               "--to", ",".join(draft["to"]),
+               "--subject", draft["subject"],
+               "--bodyContents", draft["body"],
+               "--bodyContentType", draft.get("body_type", "Text")]
+        if draft.get("cc"):
+            cmd += ["--cc", ",".join(draft["cc"])]
+        if draft.get("bcc"):
+            cmd += ["--bcc", ",".join(draft["bcc"])]
+        if draft.get("sender_override"):
+            cmd += ["--sender", draft["sender_override"]]
+        for att in draft.get("attachments") or []:
+            cmd += ["--attachment", att["path"]]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout).strip().splitlines()
+            raise BackendError(detail[-1] if detail else "m365 send failed")
+        return r.stdout.strip()
 
 
 BACKENDS = {"gmail": GmailBackend, "outlook": OutlookBackend}

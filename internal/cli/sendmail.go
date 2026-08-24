@@ -21,9 +21,9 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 	a := &app{Deps: d, out: out, errOut: errOut}
 	var (
 		commit, bodyFile, body, subject, sender string
-		to, cc, bcc                             string
+		to, cc, bcc, format                     string
 		attach                                  []string
-		list, asHTML, noOpen                    bool
+		list, noOpen                            bool
 	)
 	root := &cobra.Command{
 		Use:   "send-mail",
@@ -41,6 +41,22 @@ Three ways to run it:
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			// The three modes do not mix: silently ignoring a compose flag
+			// on --commit would let a caller believe it changed the draft.
+			var composing []string
+			for _, name := range []string{"to", "cc", "bcc", "subject", "body", "body-file", "attach", "format", "sender"} {
+				if cmd.Flags().Changed(name) {
+					composing = append(composing, "--"+name)
+				}
+			}
+			switch {
+			case commit != "" && list:
+				return errors.New("--commit and --list are different modes; use one")
+			case commit != "" && len(composing) > 0:
+				return fmt.Errorf("--commit sends the draft exactly as previewed and takes no compose flags; drop %s", strings.Join(composing, ", "))
+			case list && len(composing) > 0:
+				return fmt.Errorf("--list takes no compose flags; drop %s", strings.Join(composing, ", "))
+			}
 			switch {
 			case list:
 				rows, err := a.Drafts.Recent(30)
@@ -105,6 +121,9 @@ Three ways to run it:
 				if subject == "" {
 					return errors.New("--subject is required")
 				}
+				if format != "text" && format != "html" && format != "markdown" {
+					return fmt.Errorf("--format must be text, html, or markdown; got %q", format)
+				}
 				text, err := readBody(bodyFile, body, stdin)
 				if err != nil {
 					return err
@@ -121,9 +140,18 @@ Three ways to run it:
 				if sender != "" {
 					from = sender
 				}
+				var spec drafts.Body
+				switch format {
+				case "html":
+					spec = drafts.HTMLBody(text)
+				case "markdown":
+					spec = drafts.MarkdownBody(text)
+				default:
+					spec = drafts.PlainBody(text)
+				}
 				rec, prepared, err := a.Drafts.Create(drafts.Compose{
 					Account: a.account, From: from, To: split(to), Cc: split(cc), Bcc: split(bcc),
-					Subject: subject, Body: text, HTML: asHTML, Attach: attach,
+					Subject: subject, Body: spec, Attach: attach,
 				}, a.Now())
 				if err != nil {
 					return err
@@ -161,7 +189,7 @@ Three ways to run it:
 	f.StringVar(&body, "body", "", "body text inline")
 	f.StringVar(&bodyFile, "body-file", "", "read body from a file, or - for stdin")
 	f.StringArrayVar(&attach, "attach", nil, "attach a file (repeatable)")
-	f.BoolVar(&asHTML, "html", false, "body is HTML, not plain text")
+	f.StringVar(&format, "format", "text", "body format: text, html, or markdown (compiled into a text+HTML message)")
 	f.StringVar(&sender, "sender", "", "send as an alias / send-as address")
 	f.BoolVar(&noOpen, "no-open", false, "do not open the preview")
 	return root
@@ -179,6 +207,8 @@ func split(s string) []string {
 
 func readBody(file, inline string, stdin io.Reader) (string, error) {
 	switch {
+	case file != "" && inline != "":
+		return "", errors.New("--body and --body-file are two sources for one body; use one")
 	case file == "-":
 		b, err := io.ReadAll(stdin)
 		return string(b), err

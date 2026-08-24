@@ -16,7 +16,7 @@ import (
 func TestClaim_IsDecidedByOwnershipNotAge(t *testing.T) {
 	s := drafts.Store{Dir: t.TempDir()}
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
-	rec, _, err := s.Create(drafts.Compose{Account: "memory", From: "me@example.com", To: []string{"a@example.com"}, Subject: "once", Body: "hello there"}, now)
+	rec, _, err := s.Create(drafts.Compose{Account: "memory", From: "me@example.com", To: []string{"a@example.com"}, Subject: "once", Body: drafts.PlainBody("hello there")}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

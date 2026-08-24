@@ -83,10 +83,36 @@ type Compose struct {
 	From        string // the authenticated address, or a send-as override
 	To, Cc, Bcc []string
 	Subject     string
-	Body        string
-	HTML        bool
+	Body        Body
 	Attach      []string
 }
+
+// Body is the message body with its interpretation sealed in, the way
+// Part.Content seals where bytes live: constructed, never assembled by
+// hand, so a format the compose path does not know cannot exist. The zero
+// value is an empty plain body, which Create refuses.
+type Body struct {
+	source string
+	kind   bodyKind
+}
+
+type bodyKind int
+
+const (
+	bodyPlain bodyKind = iota
+	bodyHTML
+	bodyMarkdown
+)
+
+// PlainBody is sent as text/plain, byte for byte.
+func PlainBody(s string) Body { return Body{source: s, kind: bodyPlain} }
+
+// HTMLBody is finished HTML, sent as text/html with no plain alternative.
+func HTMLBody(s string) Body { return Body{source: s, kind: bodyHTML} }
+
+// MarkdownBody is compiled at compose time into a multipart/alternative
+// pair: a plain rendering and an HTML rendering of the same AST.
+func MarkdownBody(s string) Body { return Body{source: s, kind: bodyMarkdown} }
 
 // Store is a directory of drafts.
 type Store struct{ Dir string }
@@ -106,7 +132,7 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 			return Record{}, nil, fmt.Errorf("%q does not look like an email address", a)
 		}
 	}
-	if strings.TrimSpace(c.Body) == "" {
+	if strings.TrimSpace(c.Body.source) == "" {
 		return Record{}, nil, errors.New("refusing to draft an empty body")
 	}
 	if c.From == "" {
@@ -131,10 +157,20 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		m.SetGenHeader(gomail.Header("Bcc"), strings.Join(c.Bcc, ", "))
 	}
 	m.Subject(c.Subject)
-	if c.HTML {
-		m.SetBodyString(gomail.TypeTextHTML, c.Body)
-	} else {
-		m.SetBodyString(gomail.TypeTextPlain, c.Body)
+	switch c.Body.kind {
+	case bodyHTML:
+		m.SetBodyString(gomail.TypeTextHTML, c.Body.source)
+	case bodyMarkdown:
+		plain, html, err := compileMarkdown(c.Body.source)
+		if err != nil {
+			return Record{}, nil, err
+		}
+		// Plain first, HTML last: alternative parts are ordered by
+		// increasing faithfulness and clients prefer the last they support.
+		m.SetBodyString(gomail.TypeTextPlain, plain)
+		m.AddAlternativeString(gomail.TypeTextHTML, html)
+	default:
+		m.SetBodyString(gomail.TypeTextPlain, c.Body.source)
 	}
 	var atts []Attachment
 	for _, raw := range c.Attach {
@@ -347,7 +383,10 @@ type Parsed struct {
 	From, To, Cc, Bcc, Subject, Date string
 	BodyText                         string
 	BodyHTML                         string
-	Attachments                      []Attachment
+	// HasText/HasHTML record part presence: an empty text/html part is a
+	// real (and alarming) state, distinct from a message with no HTML part.
+	HasText, HasHTML bool
+	Attachments      []Attachment
 }
 
 // Parse reads the wire message. The preview renders from this so the page
@@ -401,9 +440,9 @@ func walk(ctype, cte string, body io.Reader, out *Parsed) error {
 		return nil
 	}
 	if mt == "text/html" {
-		out.BodyHTML = string(b)
+		out.BodyHTML, out.HasHTML = string(b), true
 	} else {
-		out.BodyText = string(b)
+		out.BodyText, out.HasText = string(b), true
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	netmail "net/mail"
 	"os"
 	"path/filepath"
@@ -194,7 +195,7 @@ func TestSend_OverLimitIsRefusedOnPreparedBytes(t *testing.T) {
 func TestSend_BodyFromStdinAndHTML(t *testing.T) {
 	h := newHarness(t)
 	h.stdin = "<p>Hello <b>there</b></p>"
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "html", "--body-file", "-", "--html", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "html", "--body-file", "-", "--format", "html", "--no-open")))
 	mustOK(t, h.send("--commit", id))
 	hdr, body, _ := parts(t, h.box.Sent[0])
 	if !strings.Contains(hdr.Get("Content-Type"), "text/html") {
@@ -202,6 +203,151 @@ func TestSend_BodyFromStdinAndHTML(t *testing.T) {
 	}
 	if !strings.Contains(body, "<b>there</b>") {
 		t.Errorf("body lost: %q", body)
+	}
+}
+
+// mimePart is one node of the sent message's MIME tree. The markdown tests
+// assert on the tree with parentage intact: a flat walk would still pass if
+// the alternative parts sat as multipart/mixed siblings.
+type mimePart struct {
+	mediaType string
+	filename  string
+	body      string
+	children  []mimePart
+}
+
+func mimeTree(t *testing.T, p *mail.Prepared) mimePart {
+	t.Helper()
+	m, err := netmail.ReadMessage(p.Reader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mimeNode(t, m.Header.Get("Content-Type"), m.Header.Get("Content-Transfer-Encoding"), m.Body)
+}
+
+func mimeNode(t *testing.T, ctype, cte string, r io.Reader) mimePart {
+	t.Helper()
+	mt, params, err := mime.ParseMediaType(ctype)
+	if err != nil {
+		mt = "text/plain"
+	}
+	node := mimePart{mediaType: mt}
+	if strings.HasPrefix(mt, "multipart/") {
+		mr := multipart.NewReader(r, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				return node
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// NextPart auto-decodes quoted-printable; base64 it leaves.
+			child := mimeNode(t, part.Header.Get("Content-Type"), part.Header.Get("Content-Transfer-Encoding"), part)
+			child.filename = part.FileName()
+			node.children = append(node.children, child)
+		}
+	}
+	b, err := io.ReadAll(decodeCTE(cte, r))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.body = strings.ReplaceAll(string(b), "\r\n", "\n")
+	return node
+}
+
+func decodeCTE(cte string, r io.Reader) io.Reader {
+	switch strings.ToLower(strings.TrimSpace(cte)) {
+	case "base64":
+		return base64.NewDecoder(base64.StdEncoding, r)
+	case "quoted-printable":
+		return quotedprintable.NewReader(r)
+	}
+	return r
+}
+
+func TestSend_MarkdownCompilesToAlternative(t *testing.T) {
+	h := newHarness(t)
+	h.stdin = "Hi **team**,\n\n- first\n- second\n\nsee [the plan](https://example.com/plan)\n\nBest,\nQiushi\n"
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "plan", "--body-file", "-", "--format", "markdown", "--no-open")))
+	mustOK(t, h.send("--commit", id))
+	root := mimeTree(t, h.box.Sent[0])
+	if root.mediaType != "multipart/alternative" {
+		t.Fatalf("root is %s, want multipart/alternative", root.mediaType)
+	}
+	if len(root.children) != 2 || root.children[0].mediaType != "text/plain" || root.children[1].mediaType != "text/html" {
+		t.Fatalf("alternative must hold text/plain then text/html (the preferred part last): %+v", root.children)
+	}
+	plain, html := root.children[0].body, root.children[1].body
+	for _, want := range []string{"*team*", "- first\n- second", "the plan (https://example.com/plan)", "Best,\nQiushi"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("plain part lacks %q:\n%s", want, plain)
+		}
+	}
+	for _, want := range []string{"<strong>team</strong>", "<li>first</li>", `<a href="https://example.com/plan">the plan</a>`, "Best,<br>"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("html part lacks %q:\n%s", want, html)
+		}
+	}
+	page, _ := os.ReadFile(h.deps.Drafts.PreviewPath(id))
+	for _, want := range []string{"<iframe", "sandbox", "Plain-text part", "Text + HTML"} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("preview lacks %q", want)
+		}
+	}
+}
+
+func TestSend_MarkdownWithAttachmentNestsAlternativeUnderMixed(t *testing.T) {
+	h := newHarness(t)
+	pdf := writeFile(t, "invoice.pdf", []byte("%PDF fake"))
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "mixed", "--body", "see **attached**", "--format", "markdown", "--attach", pdf, "--no-open")))
+	mustOK(t, h.send("--commit", id))
+	root := mimeTree(t, h.box.Sent[0])
+	if root.mediaType != "multipart/mixed" || len(root.children) != 2 {
+		t.Fatalf("root is %s with %d children, want multipart/mixed with 2", root.mediaType, len(root.children))
+	}
+	alt := root.children[0]
+	if alt.mediaType != "multipart/alternative" || len(alt.children) != 2 {
+		t.Fatalf("first child is %s with %d children, want the alternative pair", alt.mediaType, len(alt.children))
+	}
+	if root.children[1].filename != "invoice.pdf" {
+		t.Errorf("attachment lost: %+v", root.children[1])
+	}
+}
+
+func TestSend_MarkdownRefusalNamesTheConstruct(t *testing.T) {
+	h := newHarness(t)
+	r := mustFail(t, h.send("--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--format", "markdown", "--no-open"))
+	if !strings.Contains(r.stderr, "image") || !strings.Contains(r.stderr, "--attach") {
+		t.Errorf("image refusal must name the construct and the alternative: %s", r.stderr)
+	}
+	if len(h.box.Sent) != 0 {
+		t.Error("refused draft must not exist to send")
+	}
+}
+
+func TestSend_FlagAndModeConflictsAreRefused(t *testing.T) {
+	h := newHarness(t)
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "modes", "--body", "hello there", "--no-open")))
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"unknown format":       {[]string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, "text, html, or markdown"},
+		"commit with compose":  {[]string{"--commit", id, "--subject", "changed"}, "--subject"},
+		"commit with list":     {[]string{"--commit", id, "--list"}, "different modes"},
+		"list with compose":    {[]string{"--list", "--to", "a@example.com"}, "--to"},
+		"two sources for body": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "use one"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := mustFail(t, h.send(tc.args...))
+			if !strings.Contains(r.stderr, tc.want) {
+				t.Errorf("refusal must mention %q: %s", tc.want, r.stderr)
+			}
+		})
+	}
+	if len(h.box.Sent) != 0 {
+		t.Error("no conflicted invocation may send")
 	}
 }
 

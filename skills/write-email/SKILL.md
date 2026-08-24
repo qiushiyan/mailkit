@@ -39,8 +39,8 @@ What the user approves is the composed draft — markdown compiles, so the
 sent mail is the preview's rendering, not the source you drafted. The
 preview opens in the browser by default; `--no-open` suppresses only the
 auto-open, and then the preview file (its path is in the compose output) is
-what to surface — open it for the user or relay its rendered body — before
-asking to commit. `--account outlook` composes from the other mailbox. A
+what to surface — open it for the user, or relay what it shows: recipients,
+subject, attachments, and the rendered body — before asking to commit. `--account outlook` composes from the other mailbox. A
 message over the provider's size limit is reported at compose time: send a
 share link instead of the file.
 

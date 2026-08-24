@@ -1,9 +1,11 @@
 package drafts
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"strconv"
 	"strings"
 
@@ -11,7 +13,6 @@ import (
 	"github.com/yuin/goldmark/ast"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
 )
 
 // Markdown is compiled once into an AST and rendered twice: the HTML part by
@@ -137,7 +138,7 @@ func plainInline(n ast.Node, src []byte) string {
 			if v.IsRaw() {
 				b.Write(v.Segment.Value(src))
 			} else {
-				plainScalar(&b, v.Segment.Value(src))
+				b.WriteString(scalar(v.Segment.Value(src)))
 			}
 			if v.SoftLineBreak() || v.HardLineBreak() {
 				b.WriteByte('\n')
@@ -146,7 +147,7 @@ func plainInline(n ast.Node, src []byte) string {
 			if v.IsRaw() {
 				b.Write(v.Value)
 			} else {
-				plainScalar(&b, v.Value)
+				b.WriteString(scalar(v.Value))
 			}
 		case *ast.Emphasis:
 			b.WriteString("*" + plainInline(v, src) + "*")
@@ -165,7 +166,10 @@ func plainInline(n ast.Node, src []byte) string {
 				}
 			}
 		case *ast.Link:
-			plainLink(&b, plainInline(v, src), string(v.Destination), string(v.Title))
+			// Destination and title get the same scalar decoding goldmark
+			// gives them in href/title attributes, so the label-equals-
+			// destination comparison sees what each part actually shows.
+			plainLink(&b, plainInline(v, src), scalar(v.Destination), scalar(v.Title))
 		case *ast.AutoLink:
 			b.Write(v.Label(src))
 		default:
@@ -198,65 +202,17 @@ func plainLink(b *strings.Builder, label, url, title string) {
 	}
 }
 
-// plainScalar renders ordinary (non-raw) text with the scalar semantics
-// goldmark's HTML writer applies -- backslash escapes resolved and entity
-// references substituted, in one pass, so an escaped ampersand can never
-// become an entity -- but into plain text instead of escaped HTML.
-func plainScalar(b *strings.Builder, src []byte) {
-	for i := 0; i < len(src); i++ {
-		c := src[i]
-		if c == '\\' && i+1 < len(src) && util.IsPunct(src[i+1]) {
-			b.WriteByte(src[i+1])
-			i++
-			continue
-		}
-		if c == '&' {
-			if s, size := entityAt(src[i:]); size > 0 {
-				b.WriteString(s)
-				i += size - 1
-				continue
-			}
-		}
-		b.WriteByte(c)
-	}
-}
-
-// entityAt resolves an HTML entity or numeric character reference at the
-// start of src, within the same bounds goldmark's writer enforces, returning
-// the replacement and its byte length, or length 0 when there is none.
-func entityAt(src []byte) (string, int) {
-	if len(src) < 3 {
-		return "", 0
-	}
-	if src[1] == '#' {
-		num, base, limit := src[2:], 10, 8
-		if len(num) > 0 && (num[0] == 'x' || num[0] == 'X') {
-			num, base, limit = num[1:], 16, 7
-		}
-		digits := 0
-		for digits < len(num) && num[digits] != ';' {
-			digits++
-		}
-		if digits == 0 || digits >= limit || digits == len(num) {
-			return "", 0
-		}
-		v, err := strconv.ParseUint(string(num[:digits]), base, 32)
-		if err != nil {
-			return "", 0
-		}
-		return string(util.ToValidRune(rune(v))), len(src) - len(num) + digits + 1
-	}
-	end := 1
-	for end < len(src) && util.IsAlphaNumeric(src[end]) {
-		end++
-	}
-	if end == 1 || end == len(src) || src[end] != ';' {
-		return "", 0
-	}
-	if ent, ok := util.LookUpHTML5EntityByName(string(src[1:end])); ok {
-		return string(ent.Characters), end + 1
-	}
-	return "", 0
+// scalar renders ordinary (non-raw) source text with the scalar semantics
+// goldmark applies -- backslash escapes resolved, entity references
+// substituted, single-pass so an escaped ampersand can never become an
+// entity -- but as plain text. It runs goldmark's own writer and unescapes
+// the HTML it emits, so a goldmark upgrade changes both parts together.
+func scalar(src []byte) string {
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+	gmhtml.DefaultWriter.Write(w, src)
+	_ = w.Flush()
+	return stdhtml.UnescapeString(buf.String())
 }
 
 func rawLines(n ast.Node, src []byte) string {

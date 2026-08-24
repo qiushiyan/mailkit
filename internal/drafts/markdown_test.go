@@ -104,6 +104,18 @@ func TestMarkdown_BothPartsSayTheSameThing(t *testing.T) {
 			html:  []string{`<a href="mailto:a@example.com">mailto:a@example.com</a>`},
 		},
 		{
+			name:  "entities in a self-labelled destination decode once",
+			src:   "see [https://e.test/a&amp;b](https://e.test/a&amp;b) now",
+			plain: []string{"see https://e.test/a&b now"},
+			html:  []string{`href="https://e.test/a&amp;b"`},
+		},
+		{
+			name:  "entities in a link title decode in both parts",
+			src:   `[docs](https://e.test "AT&amp;T")`,
+			plain: []string{`docs (https://e.test "AT&T")`},
+			html:  []string{`title="AT&amp;T"`},
+		},
+		{
 			name:  "code block survives verbatim",
 			src:   "```\nmake check\n```",
 			plain: []string{"make check"},

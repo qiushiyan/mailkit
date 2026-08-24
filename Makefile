@@ -1,7 +1,7 @@
 BINDIR := $(HOME)/.local/bin
 CMDS := mail-find send-mail
 
-.PHONY: build install test test-live vet fmt fix check
+.PHONY: build install skills test test-live vet fmt fix check
 
 build:
 	go build ./...
@@ -12,6 +12,14 @@ build:
 install:
 	@for c in $(CMDS); do \
 		go build -o $(BINDIR)/$$c.new ./cmd/$$c && mv -f $(BINDIR)/$$c.new $(BINDIR)/$$c || exit 1; \
+	done
+
+# The in-repo skills, made global: symlinked into the stow-managed dotfiles
+# skills dir, which ~/.claude/skills already points at.
+skills:
+	@for s in skills/*/; do \
+		name=$$(basename $$s); \
+		ln -sfn $(CURDIR)/skills/$$name $(HOME)/dotfiles/claude/.claude/skills/$$name && echo "linked $$name"; \
 	done
 
 test:

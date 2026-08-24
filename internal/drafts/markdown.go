@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // Markdown is compiled once into an AST and rendered twice: the HTML part by
@@ -132,21 +134,38 @@ func plainInline(n ast.Node, src []byte) string {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		switch v := c.(type) {
 		case *ast.Text:
-			b.Write(v.Segment.Value(src))
+			if v.IsRaw() {
+				b.Write(v.Segment.Value(src))
+			} else {
+				plainScalar(&b, v.Segment.Value(src))
+			}
 			if v.SoftLineBreak() || v.HardLineBreak() {
 				b.WriteByte('\n')
 			}
 		case *ast.String:
-			b.Write(v.Value)
+			if v.IsRaw() {
+				b.Write(v.Value)
+			} else {
+				plainScalar(&b, v.Value)
+			}
 		case *ast.Emphasis:
 			b.WriteString("*" + plainInline(v, src) + "*")
-		case *ast.Link:
-			label, url := plainInline(v, src), string(v.Destination)
-			if label == "" || label == url || "mailto:"+label == url {
-				b.WriteString(strings.TrimPrefix(url, "mailto:"))
-			} else {
-				fmt.Fprintf(&b, "%s (%s)", label, url)
+		case *ast.CodeSpan:
+			// Code text is raw, and embedded newlines become spaces --
+			// the same normalisation goldmark applies on the HTML side.
+			for t := v.FirstChild(); t != nil; t = t.NextSibling() {
+				if txt, ok := t.(*ast.Text); ok {
+					seg := txt.Segment.Value(src)
+					if bytes.HasSuffix(seg, []byte("\n")) {
+						b.Write(seg[:len(seg)-1])
+						b.WriteByte(' ')
+					} else {
+						b.Write(seg)
+					}
+				}
 			}
+		case *ast.Link:
+			plainLink(&b, plainInline(v, src), string(v.Destination), string(v.Title))
 		case *ast.AutoLink:
 			b.Write(v.Label(src))
 		default:
@@ -154,6 +173,90 @@ func plainInline(n ast.Node, src []byte) string {
 		}
 	}
 	return b.String()
+}
+
+// plainLink spells a link the way plain mail does: the label, with the
+// destination (and any authored title) in parentheses -- unless the label
+// already names the destination, which then stands alone as written.
+func plainLink(b *strings.Builder, label, url, title string) {
+	if label == "" {
+		label = url
+	}
+	b.WriteString(label)
+	extra := ""
+	if label != url && "mailto:"+label != url {
+		extra = url
+	}
+	if title != "" {
+		if extra != "" {
+			extra += " "
+		}
+		extra += strconv.Quote(title)
+	}
+	if extra != "" {
+		fmt.Fprintf(b, " (%s)", extra)
+	}
+}
+
+// plainScalar renders ordinary (non-raw) text with the scalar semantics
+// goldmark's HTML writer applies -- backslash escapes resolved and entity
+// references substituted, in one pass, so an escaped ampersand can never
+// become an entity -- but into plain text instead of escaped HTML.
+func plainScalar(b *strings.Builder, src []byte) {
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '\\' && i+1 < len(src) && util.IsPunct(src[i+1]) {
+			b.WriteByte(src[i+1])
+			i++
+			continue
+		}
+		if c == '&' {
+			if s, size := entityAt(src[i:]); size > 0 {
+				b.WriteString(s)
+				i += size - 1
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+}
+
+// entityAt resolves an HTML entity or numeric character reference at the
+// start of src, within the same bounds goldmark's writer enforces, returning
+// the replacement and its byte length, or length 0 when there is none.
+func entityAt(src []byte) (string, int) {
+	if len(src) < 3 {
+		return "", 0
+	}
+	if src[1] == '#' {
+		num, base, limit := src[2:], 10, 8
+		if len(num) > 0 && (num[0] == 'x' || num[0] == 'X') {
+			num, base, limit = num[1:], 16, 7
+		}
+		digits := 0
+		for digits < len(num) && num[digits] != ';' {
+			digits++
+		}
+		if digits == 0 || digits >= limit || digits == len(num) {
+			return "", 0
+		}
+		v, err := strconv.ParseUint(string(num[:digits]), base, 32)
+		if err != nil {
+			return "", 0
+		}
+		return string(util.ToValidRune(rune(v))), len(src) - len(num) + digits + 1
+	}
+	end := 1
+	for end < len(src) && util.IsAlphaNumeric(src[end]) {
+		end++
+	}
+	if end == 1 || end == len(src) || src[end] != ';' {
+		return "", 0
+	}
+	if ent, ok := util.LookUpHTML5EntityByName(string(src[1:end])); ok {
+		return string(ent.Characters), end + 1
+	}
+	return "", 0
 }
 
 func rawLines(n ast.Node, src []byte) string {

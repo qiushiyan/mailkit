@@ -35,11 +35,14 @@ Two other formats, both explicit:
   naming this escape; backtick-fencing a snippet also keeps it literal.)
 - `--format html` — the body is finished HTML, sent as-is.
 
-The preview opens in the browser by default; `--no-open` suppresses that
-(use it when the user will review the text in the conversation instead).
-`--account outlook` composes from the other mailbox. A message over the
-provider's size limit is reported at compose time: send a share link instead
-of the file.
+What the user approves is the composed draft — markdown compiles, so the
+sent mail is the preview's rendering, not the source you drafted. The
+preview opens in the browser by default; `--no-open` suppresses only the
+auto-open, and then the preview file (its path is in the compose output) is
+what to surface — open it for the user or relay its rendered body — before
+asking to commit. `--account outlook` composes from the other mailbox. A
+message over the provider's size limit is reported at compose time: send a
+share link instead of the file.
 
 Write the body for the recipient, in the user's voice, and show it to the
 user before composing — the preview is the second look, not the first.

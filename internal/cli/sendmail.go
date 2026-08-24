@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/mail"
@@ -41,21 +42,28 @@ Three ways to run it:
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// The three modes do not mix: silently ignoring a compose flag
-			// on --commit would let a caller believe it changed the draft.
-			var composing []string
-			for _, name := range []string{"to", "cc", "bcc", "subject", "body", "body-file", "attach", "format", "sender"} {
-				if cmd.Flags().Changed(name) {
-					composing = append(composing, "--"+name)
-				}
-			}
-			switch {
-			case commit != "" && list:
+			// The three modes do not mix: a flag the active mode does not
+			// consume is refused, never silently ignored, so a caller can
+			// never believe an unread flag changed the send. The stray set
+			// is derived from what was actually set -- every flag is
+			// covered without a second inventory to maintain.
+			if commit != "" && list {
 				return errors.New("--commit and --list are different modes; use one")
-			case commit != "" && len(composing) > 0:
-				return fmt.Errorf("--commit sends the draft exactly as previewed and takes no compose flags; drop %s", strings.Join(composing, ", "))
-			case list && len(composing) > 0:
-				return fmt.Errorf("--list takes no compose flags; drop %s", strings.Join(composing, ", "))
+			}
+			if mode := commit != "" || list; mode {
+				name, verdict := "--list", "--list takes no other flags"
+				if commit != "" {
+					name, verdict = "--commit", "--commit sends the draft exactly as previewed and takes no other flags"
+				}
+				var stray []string
+				cmd.Flags().Visit(func(f *pflag.Flag) {
+					if "--"+f.Name != name {
+						stray = append(stray, "--"+f.Name)
+					}
+				})
+				if len(stray) > 0 {
+					return fmt.Errorf("%s; drop %s", verdict, strings.Join(stray, ", "))
+				}
 			}
 			switch {
 			case list:
@@ -123,6 +131,9 @@ Three ways to run it:
 				}
 				if format != "text" && format != "html" && format != "markdown" {
 					return fmt.Errorf("--format must be text, html, or markdown; got %q", format)
+				}
+				if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
+					return errors.New("--body and --body-file are two sources for one body; use one")
 				}
 				text, err := readBody(bodyFile, body, stdin)
 				if err != nil {
@@ -207,8 +218,6 @@ func split(s string) []string {
 
 func readBody(file, inline string, stdin io.Reader) (string, error) {
 	switch {
-	case file != "" && inline != "":
-		return "", errors.New("--body and --body-file are two sources for one body; use one")
 	case file == "-":
 		b, err := io.ReadAll(stdin)
 		return string(b), err

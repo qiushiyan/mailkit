@@ -352,9 +352,12 @@ func TestSend_FlagAndModeConflictsAreRefused(t *testing.T) {
 	}{
 		"unknown format":       {[]string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, "text, html, or markdown"},
 		"commit with compose":  {[]string{"--commit", id, "--subject", "changed"}, "--subject"},
+		"commit with account":  {[]string{"--commit", id, "--account", "outlook"}, "--account"},
+		"commit with no-open":  {[]string{"--commit", id, "--no-open"}, "--no-open"},
 		"commit with list":     {[]string{"--commit", id, "--list"}, "different modes"},
 		"list with compose":    {[]string{"--list", "--to", "a@example.com"}, "--to"},
 		"two sources for body": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "use one"},
+		"two sources, one set empty": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "", "--body-file", "b"}, "use one"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := mustFail(t, h.send(tc.args...))

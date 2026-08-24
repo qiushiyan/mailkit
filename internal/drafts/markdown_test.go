@@ -68,6 +68,42 @@ func TestMarkdown_BothPartsSayTheSameThing(t *testing.T) {
 			html:  []string{"<blockquote>"},
 		},
 		{
+			name:  "backslash escapes resolve in both parts",
+			src:   `2 \* 3 = 6`,
+			plain: []string{"2 * 3 = 6"},
+			html:  []string{"2 * 3 = 6"},
+		},
+		{
+			name:  "entities resolve in both parts",
+			src:   "AT&amp;T and &copy; 2026",
+			plain: []string{"AT&T and © 2026"},
+			html:  []string{"AT&amp;T and © 2026"},
+		},
+		{
+			name:  "an escaped ampersand never becomes an entity",
+			src:   `\&copy; literal`,
+			plain: []string{"&copy; literal"},
+			html:  []string{"&amp;copy; literal"},
+		},
+		{
+			name:  "code span newlines normalise to spaces in both parts",
+			src:   "run `alpha\nbeta` now",
+			plain: []string{"run alpha beta now"},
+			html:  []string{"<code>alpha beta</code>"},
+		},
+		{
+			name:  "link title reaches both parts",
+			src:   `[docs](https://example.com "draft title")`,
+			plain: []string{`docs (https://example.com "draft title")`},
+			html:  []string{`title="draft title"`},
+		},
+		{
+			name:  "a label that is the destination stays as written",
+			src:   "[mailto:a@example.com](mailto:a@example.com)",
+			plain: []string{"mailto:a@example.com"},
+			html:  []string{`<a href="mailto:a@example.com">mailto:a@example.com</a>`},
+		},
+		{
 			name:  "code block survives verbatim",
 			src:   "```\nmake check\n```",
 			plain: []string{"make check"},

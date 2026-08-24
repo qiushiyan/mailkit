@@ -88,7 +88,7 @@ func RenderPreview(rec Record, p Parsed) string {
 	if p.HasHTML {
 		frame := `<!doctype html><html><head><meta charset="utf-8">` +
 			`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">` +
-			`<style>body{margin:0;font:15px/1.6 ui-sans-serif,-apple-system,system-ui,sans-serif}</style></head><body>` +
+			`<style>body{margin:0;padding:1rem 1.5rem;font:15px/1.6 ui-sans-serif,-apple-system,system-ui,sans-serif}</style></head><body>` +
 			p.BodyHTML + `</body></html>`
 		body = fmt.Sprintf(`<iframe class="body-frame" sandbox srcdoc="%s"></iframe>`, e(frame))
 		if p.HasText {

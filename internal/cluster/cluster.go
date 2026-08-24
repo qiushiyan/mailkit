@@ -144,7 +144,11 @@ type Dropped struct {
 // Result is a cluster with its reasoning exposed.
 type Result struct {
 	Seed struct {
-		ID, ConversationID, Date, From, Subject string
+		ID             string `json:"id"`
+		ConversationID string `json:"conversation_id"`
+		Date           string `json:"date"`
+		From           string `json:"from"`
+		Subject        string `json:"subject"`
 	} `json:"seed"`
 	Signals struct {
 		Identifiers   []string `json:"identifiers"`

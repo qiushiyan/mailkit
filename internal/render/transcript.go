@@ -24,8 +24,10 @@ type Turn struct {
 
 // Fold is what the quote fold did to one message.
 type Fold struct {
-	QuotedChars int    `json:"quoted_chars,omitempty"`
-	QuoteMarker string `json:"quote_marker,omitempty"`
+	QuotedChars int `json:"quoted_chars,omitempty"`
+	// QuoteMarker names the convention that marked the quote (caret,
+	// outlook-header, provider). It is for tests and diagnosis, not output.
+	QuoteMarker string `json:"-"`
 	// FoldRejected records why a detected quote was kept: the check found
 	// its prose was not upstream, so folding would have destroyed it.
 	FoldRejected string `json:"fold_rejected,omitempty"`
@@ -172,7 +174,7 @@ func Render(t Transcript) string {
 			b.WriteString(turn.Said)
 		}
 		if turn.QuotedChars > 0 {
-			fmt.Fprintf(&b, "\n\n    [folded %d chars quoted via %s; those turns appear above]", turn.QuotedChars, turn.QuoteMarker)
+			fmt.Fprintf(&b, "\n\n    [%d chars of quoted history folded; those turns appear above]", turn.QuotedChars)
 		}
 		if turn.FoldRejected != "" {
 			fmt.Fprintf(&b, "\n\n    [quote %s]", turn.FoldRejected)

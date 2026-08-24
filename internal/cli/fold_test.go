@@ -85,7 +85,7 @@ func TestThread_FoldsOnlyWhatEarlierTurnsAlreadySaid(t *testing.T) {
 		t.Errorf("transcript %d chars from %d raw: folding did not happen", tr.TranscriptChars, tr.RawChars)
 	}
 	markers := map[string]bool{}
-	for _, turn := range tr.Turns {
+	for _, turn := range render.Build(thread).Turns {
 		if turn.QuoteMarker != "" {
 			markers[turn.QuoteMarker] = true
 		}
@@ -174,8 +174,8 @@ func TestThread_ProviderFoldedIsVerifiedNotTrusted(t *testing.T) {
 	if err := unmarshal(mustOK(t, h2.find("thread", "m2")).stdout, &tr); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(tr.Turns[1].Said, tail) || tr.Turns[1].QuoteMarker != "provider" {
-		t.Errorf("verified provider fold should be used: marker=%q said=%q", tr.Turns[1].QuoteMarker, tr.Turns[1].Said)
+	if marker := render.Build([]mail.Message{first2, second}).Turns[1].QuoteMarker; strings.Contains(tr.Turns[1].Said, tail) || marker != "provider" {
+		t.Errorf("verified provider fold should be used: marker=%q said=%q", marker, tr.Turns[1].Said)
 	}
 	if !strings.HasSuffix(tr.Turns[1].Said, "prose line.") {
 		t.Errorf("the boundary must keep the spoken text's own punctuation: %q", tr.Turns[1].Said)

@@ -110,7 +110,7 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		return Record{}, nil, errors.New("refusing to draft an empty body")
 	}
 	if c.From == "" {
-		return Record{}, nil, errors.New("no sender: not authenticated for " + c.Account)
+		return Record{}, nil, mail.Wrap(c.Account, "draft", "mail-find auth login --account "+c.Account, mail.ErrAuth)
 	}
 
 	m := gomail.NewMsg(gomail.WithNoDefaultUserAgent())
@@ -249,7 +249,7 @@ func (s Store) Open(r Record) (*mail.Prepared, error) {
 		return nil, err
 	}
 	if p.Digest() != r.SHA256 {
-		return nil, fmt.Errorf("draft %s changed since preview (sha256 differs) -- re-draft to review it", r.ID)
+		return nil, fmt.Errorf("draft %s changed since its preview -- the bytes no longer match what was reviewed; re-draft", r.ID)
 	}
 	return p, nil
 }
@@ -283,7 +283,7 @@ func (s Store) Claim(id string) (Record, error) {
 	case Sending, Unknown:
 		// Sending with no process holding the lock is a send whose outcome
 		// was never recorded: the same thing as unknown.
-		return Record{}, fmt.Errorf("draft %s is in an unknown state: the provider may have accepted it. Before re-drafting, check the sent mail for subject %q around %s (Gmail rewrites the Message-ID on send, so search by subject)", id, r.Subject, r.CreatedAt.Format(time.RFC3339))
+		return Record{}, fmt.Errorf("draft %s has an unknown outcome: the provider may have accepted it. Before re-drafting, check sent mail (the Message-ID is rewritten on send, so search by subject):\n    mail-find search 'subject:%q newer_than:1d' --account %s", id, r.Subject, r.Account)
 	default:
 		return Record{}, fmt.Errorf("draft %s is %s; drafts are single-use", id, r.State)
 	}

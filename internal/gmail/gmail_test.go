@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -502,4 +503,14 @@ func ids(hits []mail.Envelope) []string {
 		out = append(out, h.ID)
 	}
 	return out
+}
+
+// Gmail answers a malformed id with 400 and an unknown one with 404; both
+// mean "no such message" to the caller, and the error says where ids come from.
+func TestGmail_UnknownIDIsNotFoundWithRecovery(t *testing.T) {
+	_, box := newCassette(t)
+	_, err := box.Fetch(t.Context(), "no-such-id")
+	if !errors.Is(err, mail.ErrNotFound) || !strings.Contains(err.Error(), "search or resolve") {
+		t.Fatalf("want not-found with the recovery, got %v", err)
+	}
 }

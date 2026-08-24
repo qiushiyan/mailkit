@@ -50,6 +50,16 @@ func New(ctx context.Context, client *http.Client, opts ...option.ClientOption) 
 	return &Mailbox{svc: svc, LoginHint: LoginHint}, nil
 }
 
+// unknownID turns Gmail's answer to an id it does not know -- 404 for a
+// well-formed one, 400 "Invalid id value" for a malformed one -- into the
+// same not-found error with the recovery.
+func unknownID(id string, err error) error {
+	if ge, ok := errors.AsType[*googleapi.Error](err); ok && (ge.Code == http.StatusNotFound || ge.Code == http.StatusBadRequest) {
+		return fmt.Errorf("no message with id %s in this mailbox; ids come from search or resolve: %w", id, mail.ErrNotFound)
+	}
+	return err
+}
+
 // wrap labels an error at the public boundary, after mapping Google's
 // status codes to the port's sentinels.
 func (m *Mailbox) wrap(op string, err error) error {
@@ -213,7 +223,7 @@ func (m *Mailbox) envelopes(ctx context.Context, ids []string) ([]mail.Envelope,
 func (m *Mailbox) Fetch(ctx context.Context, id string) (mail.Message, error) {
 	msg, err := m.svc.Users.Messages.Get("me", id).Format("full").Context(ctx).Do()
 	if err != nil {
-		return mail.Message{}, m.wrap("fetch", err)
+		return mail.Message{}, m.wrap("fetch", unknownID(id, err))
 	}
 	return message(msg), nil
 }
@@ -221,7 +231,7 @@ func (m *Mailbox) Fetch(ctx context.Context, id string) (mail.Message, error) {
 func (m *Mailbox) Conversation(ctx context.Context, convID string) ([]mail.Message, error) {
 	t, err := m.svc.Users.Threads.Get("me", convID).Format("full").Context(ctx).Do()
 	if err != nil {
-		return nil, m.wrap("conversation", err)
+		return nil, m.wrap("conversation", unknownID(convID, err))
 	}
 	out := make([]mail.Message, 0, len(t.Messages))
 	for _, msg := range t.Messages {

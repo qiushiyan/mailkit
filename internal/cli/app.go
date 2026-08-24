@@ -93,10 +93,17 @@ func MailFind(d Deps, out, errOut io.Writer) *cobra.Command {
 	d.defaults()
 	a := &app{Deps: d, out: out, errOut: errOut}
 	root := &cobra.Command{
-		Use:           "mail-find",
-		Short:         "Search, read and download from mail history (read-only)",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:   "mail-find",
+		Short: "Search, read and download from mail history (read-only)",
+		Long: `Search, read and download from mail history. Nothing here sends or changes mail.
+
+Output is JSON; --text gives the human form. Every result's next_steps are
+runnable commands for what was seen but not done. ID is the "id" field of a
+search hit; a Message-ID (the RFC 822 header, or a message:// link) goes to
+resolve first.`,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
@@ -104,7 +111,6 @@ func MailFind(d Deps, out, errOut io.Writer) *cobra.Command {
 	// `mail-find search q --text` is what anyone writes first.
 	root.PersistentFlags().StringVar(&a.account, "account", "gmail", "which account: "+strings.Join(d.Accounts, "|"))
 	root.PersistentFlags().BoolVar(&a.text, "text", false, "human-readable output instead of JSON")
-	root.PersistentFlags().Bool("json", true, "JSON output (default)")
 
 	root.AddCommand(a.searchCmd(), a.readCmd(), a.resolveCmd(), a.threadCmd(), a.contextCmd(),
 		a.attachmentsCmd(), a.fetchCmd(), a.authCmd())
@@ -114,8 +120,9 @@ func MailFind(d Deps, out, errOut io.Writer) *cobra.Command {
 // Run executes a command tree and maps errors to the exit convention.
 func Run(cmd *cobra.Command, args []string, errOut io.Writer) int {
 	cmd.SetArgs(args)
-	if err := cmd.Execute(); err != nil {
-		fmt.Fprintf(errOut, "%s: %v\n", cmd.Name(), err)
+	ran, err := cmd.ExecuteC()
+	if err != nil {
+		fmt.Fprintf(errOut, "%s: %v\n", ran.CommandPath(), err)
 		return 1
 	}
 	return 0
@@ -156,12 +163,16 @@ func (a *app) searchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var steps []string
+			if len(hits) == 0 && !native {
+				steps = append(steps, "0 hits. Widen one bound at a time: drop the date, use the sender's domain instead of the address, or use a shorter phrase. Provider syntax goes through untouched with: mail-find search QUERY --native")
+			}
 			if !a.text {
 				rows := make([]envelopeOut, 0, len(hits))
 				for _, h := range hits {
 					rows = append(rows, envOut(h))
 				}
-				out := map[string]any{"hits": rows}
+				out := map[string]any{"hits": rows, "next_steps": orEmpty(steps)}
 				if native {
 					out["native"] = a.account + " syntax, not portable"
 				}
@@ -169,6 +180,9 @@ func (a *app) searchCmd() *cobra.Command {
 			}
 			if len(hits) == 0 {
 				a.printf("no matches\n")
+				for _, s := range steps {
+					a.printf("\n%s\n", s)
+				}
 				return nil
 			}
 			for _, h := range hits {
@@ -181,7 +195,7 @@ func (a *app) searchCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().IntVar(&limit, "limit", 25, "maximum hits")
+	c.Flags().IntVar(&limit, "limit", mail.DefaultLimit, "maximum hits")
 	c.Flags().BoolVar(&native, "native", false, "pass QUERY to the provider untouched (provider-specific syntax)")
 	return c
 }
@@ -202,6 +216,14 @@ func envOut(e mail.Envelope) envelopeOut {
 	return envelopeOut{ID: e.ID, ConversationID: e.ConversationID, MessageID: string(e.MessageID),
 		Date: e.DateHeader, From: e.From.String(), To: mail.Joined(e.To), Cc: mail.Joined(e.Cc),
 		Subject: e.Subject, Snippet: e.Snippet}
+}
+
+// orEmpty keeps next_steps an array in JSON when there are none.
+func orEmpty(steps []string) []string {
+	if steps == nil {
+		return []string{}
+	}
+	return steps
 }
 
 func truncate(s string, n int) string {
@@ -273,7 +295,7 @@ func (a *app) readCmd() *cobra.Command {
 	var fetchRemote, raw bool
 	var outDir string
 	c := &cobra.Command{
-		Use:   "read MESSAGE_ID",
+		Use:   "read ID",
 		Short: "full message: headers, body, attachment manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -307,14 +329,18 @@ func (a *app) readCmd() *cobra.Command {
 
 			// Nudges: each fires only when true, as a runnable command.
 			if !fetchRemote && len(rendered.RemoteImages) > 0 {
-				out.NextSteps = append(out.NextSteps, fmt.Sprintf("%d image(s) referenced by URL, not fetched. To include them: mail-find read %s --fetch-remote", len(rendered.RemoteImages), msg.ID))
+				out.NextSteps = append(out.NextSteps, fmt.Sprintf("%d image(s) referenced by URL, not fetched. To include them (fetching tells the sender the mail was opened): mail-find read %s --fetch-remote", len(rendered.RemoteImages), msg.ID))
 			}
 			if len(conv) > 1 {
 				out.NextSteps = append(out.NextSteps, fmt.Sprintf("1 of %d messages in this conversation. For the whole exchange: mail-find thread %s", len(conv), msg.ID))
 			}
 			for _, p := range msg.Parts {
 				if e, ok := p.Content.(mail.EmbeddedPart); ok && e.Item != nil {
-					out.NextSteps = append(out.NextSteps, fmt.Sprintf("attachment %q is an embedded message from %s: %q -- its text is in attachments[].embedded (after the attachment line with --text); it is not quoted in the body", p.Name, e.Item.From, e.Item.Subject))
+					where := "attachments[].embedded"
+					if a.text {
+						where = "printed below its attachment line"
+					}
+					out.NextSteps = append(out.NextSteps, fmt.Sprintf("attachment %q is an embedded message from %s: %q -- its text is %s, not in the body", p.Name, e.Item.From, e.Item.Subject, where))
 				}
 			}
 
@@ -352,7 +378,7 @@ func (a *app) readCmd() *cobra.Command {
 			}
 			a.printf("\n%s\n", out.Body)
 			if out.QuotedChars > 0 {
-				a.printf("\n[folded %d chars quoted via %s; --raw for the message as sent]\n", out.QuotedChars, out.QuoteMarker)
+				a.printf("\n[%d chars of quoted history folded -- it repeats earlier turns; --raw to see it]\n", out.QuotedChars)
 			}
 			if out.FoldRejected != "" {
 				a.printf("\n[quote %s]\n", out.FoldRejected)
@@ -365,13 +391,13 @@ func (a *app) readCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&fetchRemote, "fetch-remote", false, "also download images the body only links to (tells the sender the mail was opened)")
 	c.Flags().StringVar(&outDir, "out", "", "destination for downloaded images")
-	c.Flags().BoolVar(&raw, "raw", false, "the body as converted, with no quote folding or tidying")
+	c.Flags().BoolVar(&raw, "raw", false, "the body as sent, quoted history included")
 	return c
 }
 
 func (a *app) resolveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "resolve MESSAGE-ID",
+		Use:   "resolve MESSAGE-ID|message://URL",
 		Short: "find a message from a Message-ID or a message:// URL dragged out of a mail client",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -413,7 +439,7 @@ func (a *app) resolveCmd() *cobra.Command {
 func (a *app) threadCmd() *cobra.Command {
 	var raw bool
 	c := &cobra.Command{
-		Use:   "thread MESSAGE_ID",
+		Use:   "thread ID",
 		Short: "every message the provider grouped with this one, as one transcript",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -470,7 +496,7 @@ func (a *app) contextCmd() *cobra.Command {
 	var window, limit, minScore int
 	var raw bool
 	c := &cobra.Command{
-		Use:   "context MESSAGE_ID",
+		Use:   "context ID",
 		Short: "messages about the same real-world thing, across threads and senders (heuristic; each hit says why)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -483,8 +509,18 @@ func (a *app) contextCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var steps []string
+			if r.BelowMinScore > 0 {
+				steps = append(steps, fmt.Sprintf("%d weaker match(es) held back. To see them: mail-find context %s --min-score 1", r.BelowMinScore, args[0]))
+			}
+			if len(r.DroppedAsTooCommon) > 0 {
+				steps = append(steps, fmt.Sprintf("an identifier shared by too many messages was dropped as not distinctive. To include its hits anyway: mail-find context %s --raw", args[0]))
+			}
 			if !a.text {
-				return a.emit(r)
+				return a.emit(struct {
+					cluster.Result
+					NextSteps []string `json:"next_steps"`
+				}{r, orEmpty(steps)})
 			}
 			a.printf("seed  %s  %s\n      %s\n", r.Seed.ID, r.Seed.Date, r.Seed.Subject)
 			a.printf("signals  identifiers=%v  domain=%s  tokens=%v\n", r.Signals.Identifiers, orDash(r.Signals.Domain), r.Signals.SubjectTokens)
@@ -527,7 +563,7 @@ func orDash(s string) string {
 
 func (a *app) attachmentsCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "attachments MESSAGE_ID",
+		Use:   "attachments ID",
 		Short: "list a message's attachments",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -576,7 +612,7 @@ func (a *app) fetchCmd() *cobra.Command {
 	var all bool
 	var outDir string
 	c := &cobra.Command{
-		Use:   "fetch MESSAGE_ID",
+		Use:   "fetch ID",
 		Short: "download attachments to a local directory",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

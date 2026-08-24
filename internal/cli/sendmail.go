@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
+	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
 // SendMail builds the compose/commit command. Composing is always a dry
@@ -25,11 +26,19 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 		list, asHTML, noOpen                    bool
 	)
 	root := &cobra.Command{
-		Use:           "send-mail",
-		Short:         "Compose a mail draft (dry run + HTML preview); send only with --commit",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Use:   "send-mail",
+		Short: "Compose a mail draft and preview it; send only with --commit",
+		Long: `Compose a mail draft and preview it; send only with --commit.
+
+Three ways to run it:
+  send-mail --to A --subject S --body B [--attach F]...   compose: builds the exact
+                                                          message, writes a preview, sends nothing
+  send-mail --commit DRAFT-ID                             send that draft, once
+  send-mail --list                                        recent drafts and their state`,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		Args:              cobra.NoArgs,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			switch {
@@ -66,12 +75,12 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 				box, err := a.Open(ctx, rec.Account)
 				if err != nil {
 					_ = a.Drafts.Release(rec, err)
-					return err
+					return a.authHint(err)
 				}
 				acct, err := box.Account(ctx)
 				if err != nil {
 					_ = a.Drafts.Release(rec, err)
-					return err
+					return a.authHint(err)
 				}
 				if prepared.Size() > acct.SendLimit {
 					err := fmt.Errorf("message is %s, over the %s limit for %s; send a share link instead",
@@ -90,6 +99,9 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 				return nil
 
 			default:
+				if to == "" && subject == "" && body == "" && bodyFile == "" {
+					return errors.New("nothing to do: compose with --to/--subject/--body, send a draft with --commit DRAFT-ID, or --list")
+				}
 				if subject == "" {
 					return errors.New("--subject is required")
 				}
@@ -99,11 +111,11 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 				}
 				box, err := a.Open(ctx, a.account)
 				if err != nil {
-					return err
+					return a.authHint(err)
 				}
 				acct, err := box.Account(ctx)
 				if err != nil {
-					return err
+					return a.authHint(err)
 				}
 				from := acct.Address
 				if sender != "" {
@@ -143,9 +155,9 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 	f.BoolVar(&list, "list", false, "list recent drafts")
 	f.StringVar(&a.account, "account", "gmail", "which account: "+strings.Join(d.Accounts, "|"))
 	f.StringVarP(&to, "to", "t", "", "comma-separated recipients")
-	f.StringVar(&cc, "cc", "", "")
-	f.StringVar(&bcc, "bcc", "", "")
-	f.StringVarP(&subject, "subject", "s", "", "")
+	f.StringVar(&cc, "cc", "", "comma-separated copy recipients")
+	f.StringVar(&bcc, "bcc", "", "comma-separated blind copies, hidden from the other recipients")
+	f.StringVarP(&subject, "subject", "s", "", "subject line (required)")
 	f.StringVar(&body, "body", "", "body text inline")
 	f.StringVar(&bodyFile, "body-file", "", "read body from a file, or - for stdin")
 	f.StringArrayVar(&attach, "attach", nil, "attach a file (repeatable)")
@@ -184,4 +196,10 @@ func readBody(file, inline string, stdin io.Reader) (string, error) {
 		return inline, nil
 	}
 	return "", errors.New("give a body with --body or --body-file (use - for stdin)")
+}
+
+// authHint attaches the login command to a not-authenticated error that
+// reached the CLI without one; an adapter's own hint passes through.
+func (a *app) authHint(err error) error {
+	return mail.Wrap(a.account, "account", "mail-find auth login --account "+a.account, err)
 }

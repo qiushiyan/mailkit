@@ -35,6 +35,8 @@ A quoted tail is removed only when its lines already exist in *earlier* turns of
 
 `send-mail` composes a complete `.eml` at draft time (go-mail; Bcc via `SetGenHeader` because go-mail never writes a Bcc header), previews from that file, pins its sha256, and `--commit` sends those bytes or nothing. Draft state is the single-use token: `pending → sending → sent|unknown`. `Claim` serialises the transition with a kernel `flock` — ownership, never file age, decides; a process that dies after claiming leaves `sending`, reported as `unknown` with a recovery instruction. Failures before transmission `Release` to pending; anything after is `unknown`. Gmail rewrites the Message-ID on send, so recovery searches by subject and time, not by the id we set.
 
+Bodies are markdown by default, compiled once into a `multipart/alternative` whose plain and HTML parts must say the same thing — anything that cannot render equivalently in both (raw HTML, images, non-http(s)/mailto links) is a compose-time refusal, and `--format text` sends bytes verbatim (`docs/markdown-compose.md`). `Compose.Body` is a constructed sum (`PlainBody`/`HTMLBody`/`MarkdownBody`), the write-side sibling of `Part.Content`.
+
 ## Tests: the rules are the tests
 
 Tiers (`docs/go-design.md` §6): T1 adapter cassettes replay recorded raw JSON through the real adapters via `httptest`; one contract suite (`internal/mailtest`) runs against Gmail, Graph and memory. T2 drives the real Cobra trees over the memory adapter (`internal/cli/harness_test.go`) and asserts behaviour — tokens and relations, never exact output strings. T3 tables for pure rules. T4 `-tags live`.

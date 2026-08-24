@@ -122,7 +122,7 @@ internal/render                HTML → text AND remote-image references in one 
 internal/cluster               identifier extraction, probes, scoring, too-common (context.py)
 internal/images                remote fetch with deadline; classify by min edge and area
 internal/attachments           destination allocation (batch, -2 suffixes, filepath.Rel containment), sanitisation — the one owner
-internal/drafts                compose → .eml, preview from the .eml, state machine, commit
+internal/drafts                compose → .eml (markdown → text+HTML alternative), preview from the .eml, state machine, commit
 ```
 
 Rules carried, and where each now lives:
@@ -158,7 +158,10 @@ The reviewed bytes are the sent bytes, literally:
 1. `send-mail` compose builds the complete RFC 5322 message with go-mail —
    recipients incl. Bcc header, subject, body, attachment bytes, a
    deterministic `Message-ID` — and writes `<id>.eml` plus `<id>.json`
-   (state, account, sha256 and size of the `.eml`).
+   (state, account, sha256 and size of the `.eml`). The body is markdown by
+   default, compiled before the bytes are pinned into a text+HTML
+   `multipart/alternative`; `--format text|html` sends one part verbatim.
+   The compile rules and their refusals: `docs/markdown-compose.md`.
 2. The preview is rendered by parsing the `.eml`, not from the flags.
 3. `--commit <id>`: load; refuse unless state is `pending`; verify sha256;
    move to `sending` (atomic rename) *before* any network I/O; `Send`; move
@@ -203,6 +206,7 @@ Tiers, each with one job:
 | processing default, `--raw` | T2 | `read --raw` == converted text; `thread --raw` contains every body; `context --raw` ≥ default; `--raw` after the subcommand on all three |
 | recovery command | T2 | `attachments` on remote-only message names `read <id> --fetch-remote`; absent otherwise; `ErrAuth` names the login command |
 | send gate | T2 | bytes the fake `Send` receives parse back with every recipient incl. Bcc and every attachment hash; edited `.eml` refused; second commit refused; concurrent commits → one send; crash between `sending` and `sent` → `unknown` |
+| markdown compose | T3 + T2 | both renderings of one AST carry the same tokens; raw HTML / images / non-mail links / renders-to-nothing refused naming the escape; sent tree asserted with parentage (alternative under mixed, plain before HTML); `--format text` bytes survive untouched |
 | contract | T2 | each of the seven subcommands + send-mail has one happy-path case |
 
 Fixtures: raw Gmail JSON already captured (tenancy thread `19fd6b394c784f9b`,

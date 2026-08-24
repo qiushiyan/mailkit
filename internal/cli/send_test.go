@@ -41,7 +41,8 @@ func writeFile(t *testing.T, name string, content []byte) string {
 	return p
 }
 
-// parts decodes a prepared message into its attachment bytes by filename.
+// parts flattens a prepared message: attachment bytes by filename, the last
+// bodily text leaf as body. Structural assertions belong to mimeTree.
 func parts(t *testing.T, p *mail.Prepared) (hdr netmail.Header, body string, atts map[string][]byte) {
 	t.Helper()
 	m, err := netmail.ReadMessage(p.Reader())
@@ -49,30 +50,20 @@ func parts(t *testing.T, p *mail.Prepared) (hdr netmail.Header, body string, att
 		t.Fatal(err)
 	}
 	atts = map[string][]byte{}
-	mt, params, _ := mime.ParseMediaType(m.Header.Get("Content-Type"))
-	if !strings.HasPrefix(mt, "multipart/") {
-		b, _ := io.ReadAll(m.Body)
-		return m.Header, string(b), atts
-	}
-	mr := multipart.NewReader(m.Body, params["boundary"])
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			break
+	var flatten func(n mimePart)
+	flatten = func(n mimePart) {
+		for _, c := range n.children {
+			flatten(c)
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _ := io.ReadAll(part)
-		if part.Header.Get("Content-Transfer-Encoding") == "base64" {
-			b, _ = io.ReadAll(base64.NewDecoder(base64.StdEncoding, bytes.NewReader(b)))
-		}
-		if name := part.FileName(); name != "" {
-			atts[name] = b
-		} else {
-			body = string(b)
+		switch {
+		case len(n.children) > 0:
+		case n.filename != "":
+			atts[n.filename] = n.body
+		default:
+			body = n.text()
 		}
 	}
+	flatten(mimeTree(t, p))
 	return m.Header, body, atts
 }
 
@@ -212,9 +203,12 @@ func TestSend_BodyFromStdinAndHTML(t *testing.T) {
 type mimePart struct {
 	mediaType string
 	filename  string
-	body      string
+	body      []byte
 	children  []mimePart
 }
+
+// text is the leaf body with wire line endings normalised for asserting.
+func (p mimePart) text() string { return strings.ReplaceAll(string(p.body), "\r\n", "\n") }
 
 func mimeTree(t *testing.T, p *mail.Prepared) mimePart {
 	t.Helper()
@@ -252,7 +246,7 @@ func mimeNode(t *testing.T, ctype, cte string, r io.Reader) mimePart {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node.body = strings.ReplaceAll(string(b), "\r\n", "\n")
+	node.body = b
 	return node
 }
 
@@ -266,10 +260,12 @@ func decodeCTE(cte string, r io.Reader) io.Reader {
 	return r
 }
 
-func TestSend_MarkdownCompilesToAlternative(t *testing.T) {
+// Markdown is the default format: an agent writing naturally gets the
+// text+HTML pair without knowing a flag exists.
+func TestSend_MarkdownIsTheDefaultAndCompilesToAlternative(t *testing.T) {
 	h := newHarness(t)
 	h.stdin = "Hi **team**,\n\n- first\n- second\n\nsee [the plan](https://example.com/plan)\n\nBest,\nQiushi\n"
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "plan", "--body-file", "-", "--format", "markdown", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "plan", "--body-file", "-", "--no-open")))
 	mustOK(t, h.send("--commit", id))
 	root := mimeTree(t, h.box.Sent[0])
 	if root.mediaType != "multipart/alternative" {
@@ -278,7 +274,7 @@ func TestSend_MarkdownCompilesToAlternative(t *testing.T) {
 	if len(root.children) != 2 || root.children[0].mediaType != "text/plain" || root.children[1].mediaType != "text/html" {
 		t.Fatalf("alternative must hold text/plain then text/html (the preferred part last): %+v", root.children)
 	}
-	plain, html := root.children[0].body, root.children[1].body
+	plain, html := root.children[0].text(), root.children[1].text()
 	for _, want := range []string{"*team*", "- first\n- second", "the plan (https://example.com/plan)", "Best,\nQiushi"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("plain part lacks %q:\n%s", want, plain)
@@ -317,12 +313,33 @@ func TestSend_MarkdownWithAttachmentNestsAlternativeUnderMixed(t *testing.T) {
 
 func TestSend_MarkdownRefusalNamesTheConstruct(t *testing.T) {
 	h := newHarness(t)
-	r := mustFail(t, h.send("--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--format", "markdown", "--no-open"))
+	r := mustFail(t, h.send("--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--no-open"))
 	if !strings.Contains(r.stderr, "image") || !strings.Contains(r.stderr, "--attach") {
 		t.Errorf("image refusal must name the construct and the alternative: %s", r.stderr)
 	}
+	// Pasted content that trips the compiler must be pointed at the escape.
+	r = mustFail(t, h.send("--to", "a@example.com", "--subject", "log", "--body", "the error was <div>boom</div>", "--no-open"))
+	if !strings.Contains(r.stderr, "--format text") {
+		t.Errorf("raw-HTML refusal must name --format text as the way to send verbatim: %s", r.stderr)
+	}
 	if len(h.box.Sent) != 0 {
 		t.Error("refused draft must not exist to send")
+	}
+}
+
+// --format text is the escape hatch: the bytes go out as text/plain exactly
+// as authored, markdown syntax and all.
+func TestSend_FormatTextSendsBytesVerbatim(t *testing.T) {
+	h := newHarness(t)
+	body := "keep **stars**, [brackets](x) and <angles> as they are"
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "verbatim", "--body", body, "--format", "text", "--no-open")))
+	mustOK(t, h.send("--commit", id))
+	root := mimeTree(t, h.box.Sent[0])
+	if root.mediaType != "text/plain" || len(root.children) != 0 {
+		t.Fatalf("text format must send a single text/plain part, got %s with %d children", root.mediaType, len(root.children))
+	}
+	if got := strings.TrimRight(root.text(), "\n"); got != body {
+		t.Errorf("body transformed:\n got %q\nwant %q", got, body)
 	}
 }
 

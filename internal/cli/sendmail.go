@@ -189,7 +189,7 @@ Three ways to run it:
 	f.StringVar(&body, "body", "", "body text inline")
 	f.StringVar(&bodyFile, "body-file", "", "read body from a file, or - for stdin")
 	f.StringArrayVar(&attach, "attach", nil, "attach a file (repeatable)")
-	f.StringVar(&format, "format", "text", "body format: text, html, or markdown (compiled into a text+HTML message)")
+	f.StringVar(&format, "format", "markdown", "body format: markdown (default, compiled into a text+HTML message), text (bytes sent verbatim), or html")
 	f.StringVar(&sender, "sender", "", "send as an alias / send-as address")
 	f.BoolVar(&noOpen, "no-open", false, "do not open the preview")
 	return root

@@ -48,16 +48,16 @@ func refuseUnrenderable(doc ast.Node, src []byte) error {
 		}
 		switch v := n.(type) {
 		case *ast.HTMLBlock, *ast.RawHTML:
-			return ast.WalkStop, errors.New("raw HTML cannot render the same in both parts of the message; write markdown, or pass a finished HTML body with --format html")
+			return ast.WalkStop, errors.New("raw HTML cannot render the same in both parts of the message; write markdown, pass a finished HTML body with --format html, or send the bytes untouched with --format text")
 		case *ast.Image:
 			return ast.WalkStop, errors.New("images are not supported in markdown bodies: a remote image is a read receipt for the sender's preview, a local path is a broken link for the recipient; use --attach")
 		case *ast.Link:
 			if !mailableLink(string(v.Destination)) {
-				return ast.WalkStop, fmt.Errorf("link destination %q must be http(s) or mailto", v.Destination)
+				return ast.WalkStop, fmt.Errorf("link destination %q must be http(s) or mailto; --format text sends the body untouched", v.Destination)
 			}
 		case *ast.AutoLink:
 			if v.AutoLinkType == ast.AutoLinkURL && !mailableLink(string(v.URL(src))) {
-				return ast.WalkStop, fmt.Errorf("link destination %q must be http(s) or mailto", v.URL(src))
+				return ast.WalkStop, fmt.Errorf("link destination %q must be http(s) or mailto; --format text sends the body untouched", v.URL(src))
 			}
 		}
 		return ast.WalkContinue, nil

@@ -79,15 +79,23 @@ written):
 CSS. No wrapper, no inline styles: personal mail should look like mail in the
 recipient's client, not a designed page.
 
-**CLI surface: one `--format text|html|markdown` flag** (default `text`),
-replacing `--html` — one enum instead of two mutually exclusive booleans, and
-the skill is the only consumer to migrate. The same change completes the
-refusal surface around it: `--commit`/`--list` with compose-only flags,
+**CLI surface: one `--format markdown|text|html` flag, markdown the
+default**, replacing `--html` — one enum instead of two mutually exclusive
+booleans, and the skill is the only consumer to migrate. Markdown is the
+default because the failure asymmetry favours it: an agent that never read
+the skill gets formatting instead of sending literal `**bold**` to a human,
+and the default's own failures are louder — a transformation is visible in
+the preview, a refused construct is a compose-time error that names
+`--format text` as the verbatim escape. Processed-by-default with an explicit
+bypass is also the read side's shape (`--raw`). The cost accepted: pasted
+content with markdown-significant characters transforms or is refused, so
+every refusal points at the escape. The same change completes the refusal
+surface around the modes: `--commit`/`--list` with compose-only flags,
 `--commit` with `--list`, and `--body` with `--body-file` are refusals, not
 silent precedence. No extension sniffing on `--body-file`: stdin has no
-extension, and `note.md` silently changing meaning would transform mail that
-used to send verbatim. The skill tells agents to pass markdown via stdin or a
-file — inline `--body` invites shell corruption of backticks and dollars.
+extension, and the format is not a property of a file name. The skill tells
+agents to pass markdown via stdin or a file — inline `--body` invites shell
+corruption of backticks and dollars.
 
 **Decided: soft breaks are line breaks** (`WithHardWraps` stays). The goal is
 that newlines just work without teaching agents an escape syntax; the two

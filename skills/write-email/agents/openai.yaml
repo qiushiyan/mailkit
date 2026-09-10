@@ -1,0 +1,2 @@
+policy:
+  allow_implicit_invocation: false  # Derived from SKILL.md by skill-sync

@@ -3,9 +3,10 @@
 //
 // A Mailbox does seven things and no more: prove who it is, resolve a
 // Message-ID, search, fetch one message, fetch a conversation, stream a
-// stored part, and send bytes that were prepared elsewhere. Everything
-// downstream -- HTML to text, quote folding, clustering, the send gate --
-// operates on the types here and never sees a provider.
+// stored part, and send bytes that were prepared elsewhere -- as a new
+// conversation, or into the conversation of the message they answer.
+// Everything downstream -- HTML to text, quote folding, clustering, the
+// send gate -- operates on the types here and never sees a provider.
 package mail
 
 import (
@@ -44,9 +45,11 @@ type Mailbox interface {
 	Conversation(ctx context.Context, convID string) ([]Message, error)
 	// Open streams a StoredPart's bytes. Other part kinds return ErrNoBytes.
 	Open(ctx context.Context, h Handle, w io.Writer) error
-	// Send transmits p exactly as prepared. The gate is upstream; this is
-	// transport.
-	Send(ctx context.Context, p *Prepared) (providerID string, err error)
+	// Send transmits p exactly as prepared. With a parent, the message joins
+	// the parent's conversation, addressed exactly as p's headers say; a
+	// provider that cannot promise both refuses with ErrNotSent before
+	// transmitting. The gate is upstream; this is transport.
+	Send(ctx context.Context, p *Prepared, parent *Parent) (Sent, error)
 }
 
 // Account is the address a Mailbox acts as, and the ceiling it sends under.
@@ -84,6 +87,12 @@ type Envelope struct {
 	Subject        string
 	Snippet        string
 	HasAttachments bool
+	// ReplyTo is where the sender asked replies to go, when it said.
+	ReplyTo []Address
+	// InReplyTo and References are the message's own threading headers,
+	// as sent; a reply to it continues the chain they start.
+	InReplyTo  []MessageID
+	References []MessageID
 }
 
 // Body is a message body as the provider holds it. HTML is preferred; Text
@@ -176,6 +185,9 @@ var (
 	ErrNotFound = errors.New("not found")
 	ErrNoBytes  = errors.New("part has no bytes to fetch from the message")
 	ErrTooLarge = errors.New("message exceeds the provider's size limit")
+	// ErrNotSent marks a Send that failed before any byte left: the draft
+	// can be committed again once the cause is fixed.
+	ErrNotSent = errors.New("nothing was sent")
 )
 
 // ProviderError says which provider and operation failed, and why.

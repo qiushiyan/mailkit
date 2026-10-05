@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"mime"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,10 +183,77 @@ func Run(t *testing.T, box mail.Mailbox, s Scenario) {
 	t.Run("Send refuses over the limit and accepts under it", func(t *testing.T) {
 		a, _ := box.Account(ctx)
 		big, _ := mail.NewPrepared(bytes.NewReader(append([]byte("From: a@b.c\r\nTo: d@e.f\r\nSubject: x\r\n\r\n"), bytes.Repeat([]byte("x"), int(a.SendLimit)+1)...)))
-		if _, err := box.Send(ctx, big); !errors.Is(err, mail.ErrTooLarge) {
+		if _, err := box.Send(ctx, big, nil); !errors.Is(err, mail.ErrTooLarge) {
 			t.Errorf("oversize send should be ErrTooLarge, got %v", err)
 		}
 	})
+
+	// Last, because it adds a message to MessageID's conversation.
+	t.Run("Send with a parent joins the parent's conversation", func(t *testing.T) {
+		a, err := box.Account(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		orig, err := box.Fetch(ctx, s.MessageID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := box.Conversation(ctx, orig.ConversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := mail.NewReply(orig.Envelope, []string{a.Address}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		to := make([]string, 0, len(r.To))
+		for _, x := range r.To {
+			to = append(to, x.Email)
+		}
+		const said = "This reply carries the word zephyrine, which nothing else holds."
+		p, err := mail.NewPrepared(strings.NewReader("From: " + a.Address + "\r\nTo: " + strings.Join(to, ", ") +
+			"\r\nSubject: " + mime.QEncoding.Encode("utf-8", r.Subject) + "\r\nIn-Reply-To: " + r.InReplyTo +
+			"\r\nReferences: " + r.References + "\r\nMessage-ID: <contract-reply@mailkit.test>" +
+			"\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + said + "\r\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := r.Parent()
+		sent, err := box.Send(ctx, p, &parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sent.ConversationID != "" && sent.ConversationID != orig.ConversationID {
+			t.Errorf("the provider reports conversation %s, want the parent's %s", sent.ConversationID, orig.ConversationID)
+		}
+		after, err := box.Conversation(ctx, orig.ConversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before)+1 {
+			t.Fatalf("the parent's conversation went from %d to %d messages; the reply is not in it", len(before), len(after))
+		}
+		var got *mail.Message
+		for i := range after {
+			if strings.Contains(after[i].Body.Text+after[i].Body.HTML, "zephyrine") {
+				got = &after[i]
+			}
+		}
+		if got == nil {
+			t.Fatalf("no message in the parent's conversation carries the reply's body: %v", subjects(after))
+		}
+		if got.Subject != r.Subject || got.ConversationID != orig.ConversationID {
+			t.Errorf("reply listed as %q in %s, want %q in %s", got.Subject, got.ConversationID, r.Subject, orig.ConversationID)
+		}
+	})
+}
+
+func subjects(ms []mail.Message) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Subject)
+	}
+	return out
 }
 
 func ids(es []mail.Envelope) []string {

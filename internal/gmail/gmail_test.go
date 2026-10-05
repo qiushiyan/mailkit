@@ -1,14 +1,20 @@
 package gmail_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	netmail "net/mail"
 	"net/url"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +41,8 @@ type cassette struct {
 	requests    []*url.URL
 	attachment  string // base64url bytes served for any attachments.get
 	lastSendRaw string // the raw field of the last messages.send
+	lastSend    *gm.Message
+	sends       int
 }
 
 func newCassette(t *testing.T) (*cassette, *gmail.Mailbox) {
@@ -224,9 +232,14 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body gm.Message
 		_ = json.UnmarshalRead(r.Body, &body)
 		c.mu.Lock()
-		c.lastSendRaw = body.Raw
+		c.lastSendRaw, c.lastSend = body.Raw, &body
+		stored, err := c.file(&body)
 		c.mu.Unlock()
-		writeJSON(gm.Message{Id: "sent-1"})
+		if err != nil {
+			http.Error(w, `{"error":{"code":404,"message":"`+err.Error()+`"}}`, 404)
+			return
+		}
+		writeJSON(gm.Message{Id: stored.Id, ThreadId: stored.ThreadId})
 	case strings.HasPrefix(path, "/messages/") && strings.Contains(path, "/attachments/"):
 		msgID := strings.TrimPrefix(path, "/messages/")
 		msgID = msgID[:strings.Index(msgID, "/")]
@@ -259,6 +272,80 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unexpected "+r.URL.String(), 500)
 	}
+}
+
+// file models where Gmail puts a message it sends (the threads guide's
+// criteria): into the requested thread only when the message's
+// In-Reply-To/References name a message in that thread and the subjects
+// match once reply prefixes are set aside; into a thread of its own
+// otherwise, silently. It also replaces the Message-ID, as the live send
+// showed Gmail does. Only single-part bodies are modelled -- a multipart
+// send is a loud failure, not a silent pass.
+func (c *cassette) file(req *gm.Message) (*gm.Message, error) {
+	// The handler runs off the test goroutine: report, never t.Fatal.
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(req.Raw, "="))
+	if err != nil {
+		c.t.Errorf("raw is not base64url: %v", err)
+		return nil, err
+	}
+	m, err := netmail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		c.t.Errorf("raw is not RFC 5322: %v", err)
+		return nil, err
+	}
+	if strings.HasPrefix(strings.ToLower(m.Header.Get("Content-Type")), "multipart/") {
+		c.t.Errorf("cassette files single-part sends only -- extend it deliberately")
+	}
+	body, err := io.ReadAll(m.Body)
+	if err != nil {
+		return nil, err
+	}
+	c.sends++
+	id := fmt.Sprintf("sent-%d", c.sends)
+	thread := id
+	if req.ThreadId != "" {
+		named, same, found := false, false, false
+		refs := mail.ParseMessageIDs(m.Header.Get("In-Reply-To") + " " + m.Header.Get("References"))
+		subject, _ := new(mime.WordDecoder).DecodeHeader(m.Header.Get("Subject"))
+		for _, x := range c.messages {
+			if x.ThreadId != req.ThreadId {
+				continue
+			}
+			found = true
+			named = named || slices.Contains(refs, mail.MessageID(strings.Trim(header(x, "Message-ID"), "<> ")))
+			same = same || bareSubject(header(x, "Subject")) == bareSubject(subject)
+		}
+		if !found {
+			return nil, errors.New("Requested entity was not found.")
+		}
+		if named && same {
+			thread = req.ThreadId
+		}
+	}
+	var hdrs []*gm.MessagePartHeader
+	for k, vs := range m.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Message-ID") {
+				v = "<" + id + "@mail.gmail.com>"
+			}
+			hdrs = append(hdrs, &gm.MessagePartHeader{Name: k, Value: v})
+		}
+	}
+	msg := &gm.Message{Id: id, ThreadId: thread, InternalDate: time.Now().UnixMilli(), Payload: &gm.MessagePart{
+		MimeType: "text/plain", Headers: hdrs,
+		Body: &gm.MessagePartBody{Data: base64.RawURLEncoding.EncodeToString(body), Size: int64(len(body))},
+	}}
+	c.messages[id] = msg
+	return msg, nil
+}
+
+var replyPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?)\s*:\s*`)
+
+func bareSubject(s string) string {
+	for replyPrefix.MatchString(s) {
+		s = replyPrefix.ReplaceAllString(s, "")
+	}
+	return strings.TrimSpace(s)
 }
 
 // --- the golden translation: recorded JSON -> Message ----------------------
@@ -406,10 +493,13 @@ func TestGmail_SendEncodesPreparedBytesAsRaw(t *testing.T) {
 	c, box := newCassette(t)
 	p, err := mail.NewPrepared(strings.NewReader("From: a@b.c\r\nTo: d@e.f\r\nSubject: hi\r\n\r\nbody\r\n"))
 	must(t, err)
-	id, err := box.Send(t.Context(), p)
+	sent, err := box.Send(t.Context(), p, nil)
 	must(t, err)
-	if id != "sent-1" {
-		t.Errorf("id = %q", id)
+	if sent.ID != "sent-1" || sent.ConversationID != "sent-1" {
+		t.Errorf("sent = %+v", sent)
+	}
+	if c.lastSend.ThreadId != "" {
+		t.Errorf("a new message must not name a thread: %q", c.lastSend.ThreadId)
 	}
 	if c.lastSendRaw == "" {
 		t.Fatal("no send body captured")
@@ -512,5 +602,41 @@ func TestGmail_UnknownIDIsNotFoundWithRecovery(t *testing.T) {
 	_, err := box.Fetch(t.Context(), "no-such-id")
 	if !errors.Is(err, mail.ErrNotFound) || !strings.Contains(err.Error(), "search or resolve") {
 		t.Fatalf("want not-found with the recovery, got %v", err)
+	}
+}
+
+// The adapter's half of threading: a reply names its thread on the request
+// and reports the thread Gmail answers with -- including when Gmail
+// ignored the request, which the cassette models for a reply whose subject
+// was retyped. The bytes are the CLI's; the thread is the call's.
+func TestGmail_ReplyNamesTheThreadAndReportsWhereGmailPutIt(t *testing.T) {
+	c, box := newCassette(t)
+	thread := fixtures.Thread(t, fixtures.TenancyThread)
+	last := thread[len(thread)-1]
+	r, err := mail.NewReply(last.Envelope, []string{"qiushi.yann@gmail.com"}, false)
+	must(t, err)
+	send := func(subject string) mail.Sent {
+		t.Helper()
+		p, err := mail.NewPrepared(strings.NewReader("From: qiushi.yann@gmail.com\r\nTo: FHashim@quintainliving.com\r\nSubject: " + subject +
+			"\r\nIn-Reply-To: " + r.InReplyTo + "\r\nReferences: " + r.References + "\r\n\r\nThe keys are with the concierge.\r\n"))
+		must(t, err)
+		parent := r.Parent()
+		sent, err := box.Send(t.Context(), p, &parent)
+		must(t, err)
+		if c.lastSend.ThreadId != fixtures.TenancyThread {
+			t.Errorf("request threadId = %q, want the parent's conversation", c.lastSend.ThreadId)
+		}
+		return sent
+	}
+	if sent := send(r.Subject); sent.ConversationID != fixtures.TenancyThread {
+		t.Errorf("a reply with the derived subject landed in %q", sent.ConversationID)
+	}
+	if sent := send("Keys"); sent.ConversationID == fixtures.TenancyThread || sent.ConversationID == "" {
+		t.Errorf("Gmail files a reply with another subject in a thread of its own, and the adapter must report that, got %q", sent.ConversationID)
+	}
+	msgs, err := box.Conversation(t.Context(), fixtures.TenancyThread)
+	must(t, err)
+	if len(msgs) != len(thread)+1 {
+		t.Errorf("thread holds %d messages after one threaded reply, want %d", len(msgs), len(thread)+1)
 	}
 }

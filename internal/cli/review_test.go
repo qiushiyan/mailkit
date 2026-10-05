@@ -118,6 +118,52 @@ func TestSend_PreSendRefusalReturnsToPending(t *testing.T) {
 	}
 }
 
+// --- replies: an answer must join the conversation it answers -------------
+
+// Finding 2026-10-05: with no reply flow, the answer to a support mail went
+// out as a new message under a "Re:" subject. Apple Mail grouped it by
+// subject, so it looked threaded; Gmail gave it a thread of its own and its
+// draft carried no In-Reply-To or References, so the helpdesk could not
+// attach it to the ticket either.
+func TestSend_ReplyJoinsTheConversationItAnswers(t *testing.T) {
+	orig := msg("liam", "ticket", day(1), "Liam <liam@help.example>", "Refund request", para("We can refund the unused part of the quarter, or upgrade you to annual."))
+	orig.MessageID = "CALag-refund@mail.example"
+	orig.References = []mail.MessageID{"first-ask@mail.example"}
+	h := newHarness(t, orig)
+	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me, thanks.", "--no-open")))
+	mustOK(t, h.send("--commit", id))
+
+	hdr, _, _ := parts(t, h.box.Sent[0])
+	if got := hdr.Get("In-Reply-To"); got != "<CALag-refund@mail.example>" {
+		t.Errorf("In-Reply-To = %q, want the original's Message-ID", got)
+	}
+	if got := strings.Fields(hdr.Get("References")); len(got) != 2 || got[0] != "<first-ask@mail.example>" || got[1] != "<CALag-refund@mail.example>" {
+		t.Errorf("References = %q, want the original's chain then the original", got)
+	}
+	turns := mustOK(t, h.find("thread", "liam")).jsonList(t, "turns")
+	if len(turns) != 2 || !strings.Contains(turns[1]["said"].(string), "refund works for me") {
+		t.Fatalf("the reply is not a turn of the original's thread: %v", turns)
+	}
+	reply := mustOK(t, h.find("read", turns[1]["id"].(string))).json(t)
+	if reply["conversation_id"] != "ticket" || reply["subject"] != "Re: Refund request" {
+		t.Errorf("reply has conversation %v and subject %v", reply["conversation_id"], reply["subject"])
+	}
+}
+
+// Finding 2026-10-05: drafts were written with "Message-ID: <<id@mailkit>>"
+// -- an id already in brackets, bracketed again -- which is not a msg-id
+// at all. Gmail rewrote it on send and hid the defect.
+func TestSend_MessageIDIsOneMsgID(t *testing.T) {
+	h := newHarness(t)
+	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "id", "--body", "hello there", "--no-open")))
+	mustOK(t, h.send("--commit", id))
+	hdr, _, _ := parts(t, h.box.Sent[0])
+	got := hdr.Get("Message-ID")
+	if want := "<" + id + "@mailkit>"; got != want {
+		t.Errorf("Message-ID = %q, want %q", got, want)
+	}
+}
+
 // --- resolve: message:// URLs are percent-encoded, in either case ---------
 
 func TestContract_ResolveDecodesAnyPercentEncoding(t *testing.T) {

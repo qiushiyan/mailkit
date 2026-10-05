@@ -116,8 +116,9 @@ alternative stays inspectable in a collapsed section.
   asked for.
 - **GFM tables / strikethrough / task lists** — one-line extensions when
   needed.
-- **Replies** — there is no reply flow to integrate with; markdown quoting
-  waits for threading.
+- **Quoting the original in a reply** — `--reply` threads the answer
+  (`docs/go-design.md` § Replies) and carries only what the author writes;
+  a markdown blockquote of the original waits until asked.
 - **Read-side markdown** (HTML→markdown for `mail-find`) — different
   feature; `render.Convert` stays the calibrated read form and is
   deliberately not reused on the write path, since its folding rules are

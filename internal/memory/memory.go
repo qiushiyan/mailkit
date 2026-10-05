@@ -6,12 +6,18 @@ package memory
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
+	netmail "net/mail"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/qiushiyan/mailkit/internal/mail"
 )
@@ -33,8 +39,10 @@ type Mailbox struct {
 	mu       sync.Mutex
 	messages []mail.Message
 	parts    map[mail.Handle][]byte
-	// Sent records every prepared message Send received, in order.
-	Sent []*mail.Prepared
+	// Sent records every prepared message Send received, in order, and
+	// Parents the parent each was sent under (nil for a new conversation).
+	Sent    []*mail.Prepared
+	Parents []*mail.Parent
 	// Searches records every Criteria Search received, for tests that
 	// assert what a caller asked for.
 	Searches []mail.Criteria
@@ -158,17 +166,115 @@ func (m *Mailbox) Open(_ context.Context, h mail.Handle, w io.Writer) error {
 	return err
 }
 
-func (m *Mailbox) Send(_ context.Context, p *mail.Prepared) (string, error) {
+// Send keeps the message, as a provider keeps sent mail: in the parent's
+// conversation when it has one, in a conversation of its own otherwise.
+func (m *Mailbox) Send(_ context.Context, p *mail.Prepared, parent *mail.Parent) (mail.Sent, error) {
 	if p.Size() > m.SendLimit {
-		return "", mail.ErrTooLarge
+		return mail.Sent{}, mail.ErrTooLarge
 	}
 	if m.SendErr != nil {
-		return "", m.SendErr
+		return mail.Sent{}, m.SendErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	id := fmt.Sprintf("memory-%d", len(m.Sent)+1)
+	conv := id
+	if parent != nil {
+		if !slices.ContainsFunc(m.messages, func(msg mail.Message) bool { return msg.ConversationID == parent.ConversationID }) {
+			return mail.Sent{}, fmt.Errorf("%w: conversation %s: %w", mail.ErrNotSent, parent.ConversationID, mail.ErrNotFound)
+		}
+		conv = parent.ConversationID
+	}
+	msg, err := materialize(p, id, conv)
+	if err != nil {
+		return mail.Sent{}, err
+	}
 	m.Sent = append(m.Sent, p)
-	return fmt.Sprintf("memory-%d", len(m.Sent)), nil
+	m.Parents = append(m.Parents, parent)
+	m.messages = append(m.messages, msg)
+	return mail.Sent{ID: id, ConversationID: conv}, nil
+}
+
+// materialize reads a prepared message back as the Message a provider
+// would list for it. Parts are not kept: nothing here reads a sent
+// message's attachments.
+func materialize(p *mail.Prepared, id, conv string) (mail.Message, error) {
+	m, err := netmail.ReadMessage(p.Reader())
+	if err != nil {
+		return mail.Message{}, err
+	}
+	dec := new(mime.WordDecoder)
+	hdr := func(k string) string {
+		if v, err := dec.DecodeHeader(m.Header.Get(k)); err == nil {
+			return v
+		}
+		return m.Header.Get(k)
+	}
+	received := time.Now().UTC()
+	if t, err := mail.ParseDate(m.Header.Get("Date")); err == nil {
+		received = t
+	}
+	out := mail.Message{
+		ID:             id,
+		ConversationID: conv,
+		MessageID:      mail.MessageID(strings.Trim(m.Header.Get("Message-ID"), "<> ")),
+		Received:       received,
+		DateHeader:     m.Header.Get("Date"),
+		From:           mail.ParseAddress(hdr("From")),
+		To:             mail.ParseAddressList(hdr("To")),
+		Cc:             mail.ParseAddressList(hdr("Cc")),
+		Subject:        hdr("Subject"),
+		InReplyTo:      mail.ParseMessageIDs(m.Header.Get("In-Reply-To")),
+		References:     mail.ParseMessageIDs(m.Header.Get("References")),
+	}
+	if err := body(m.Header.Get("Content-Type"), m.Header.Get("Content-Transfer-Encoding"), m.Body, &out.Body); err != nil {
+		return mail.Message{}, err
+	}
+	if out.Body.HTML != "" {
+		out.Body.Text = "" // Body holds Text only when there is no HTML
+	}
+	return out, nil
+}
+
+// body walks the MIME tree for the first text/plain and text/html leaves.
+func body(ctype, cte string, r io.Reader, out *mail.Body) error {
+	mt, params, err := mime.ParseMediaType(ctype)
+	if err != nil {
+		mt = "text/plain"
+	}
+	if strings.HasPrefix(mt, "multipart/") {
+		mr := multipart.NewReader(r, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if err := body(part.Header.Get("Content-Type"), part.Header.Get("Content-Transfer-Encoding"), part, out); err != nil {
+				return err
+			}
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(cte)) {
+	case "base64":
+		r = base64.NewDecoder(base64.StdEncoding, r)
+	case "quoted-printable":
+		r = quotedprintable.NewReader(r)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	switch {
+	case params["name"] != "":
+	case mt == "text/html" && out.HTML == "":
+		out.HTML = string(b)
+	case mt == "text/plain" && out.Text == "":
+		out.Text = string(b)
+	}
+	return nil
 }
 
 var _ mail.Mailbox = (*Mailbox)(nil)

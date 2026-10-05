@@ -2,8 +2,10 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -16,7 +18,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/memory"
 )
 
 // The send gate's promise: the bytes reviewed are the bytes sent, once.
@@ -350,13 +354,13 @@ func TestSend_FlagAndModeConflictsAreRefused(t *testing.T) {
 		args []string
 		want string
 	}{
-		"unknown format":       {[]string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, "text, html, or markdown"},
-		"commit with compose":  {[]string{"--commit", id, "--subject", "changed"}, "--subject"},
-		"commit with account":  {[]string{"--commit", id, "--account", "outlook"}, "--account"},
-		"commit with no-open":  {[]string{"--commit", id, "--no-open"}, "--no-open"},
-		"commit with list":     {[]string{"--commit", id, "--list"}, "different modes"},
-		"list with compose":    {[]string{"--list", "--to", "a@example.com"}, "--to"},
-		"two sources for body": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "use one"},
+		"unknown format":             {[]string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, "text, html, or markdown"},
+		"commit with compose":        {[]string{"--commit", id, "--subject", "changed"}, "--subject"},
+		"commit with account":        {[]string{"--commit", id, "--account", "outlook"}, "--account"},
+		"commit with no-open":        {[]string{"--commit", id, "--no-open"}, "--no-open"},
+		"commit with list":           {[]string{"--commit", id, "--list"}, "different modes"},
+		"list with compose":          {[]string{"--list", "--to", "a@example.com"}, "--to"},
+		"two sources for body":       {[]string{"--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "use one"},
 		"two sources, one set empty": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "", "--body-file", "b"}, "use one"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -381,5 +385,192 @@ func TestSend_ListShowsState(t *testing.T) {
 	mustOK(t, h.send("--commit", id))
 	if r := mustOK(t, h.send("--list")); !strings.Contains(r.stdout, "sent") {
 		t.Errorf("list should show it sent:\n%s", r.stdout)
+	}
+}
+
+// --- replies: the gate holds for an answer, thread included ---------------
+
+// ticket is a support conversation: the customer's question, and the
+// helpdesk's answer that the user replies to.
+func ticket() (ask, answer mail.Message) {
+	ask = msg("ask", "ticket", day(0), "Me <me@example.com>", "Refund request", para("I was charged for a renewal I did not want; can it be refunded?"))
+	ask.MessageID = "ask@mail.example"
+	ask.To = []mail.Address{{Email: "help@vendor.example"}}
+	answer = msg("liam", "ticket", day(1), "Liam <liam@vendor.example>", "Re: Refund request", para("We can refund the unused part of the quarter, or upgrade you to annual."))
+	answer.MessageID = "CALag-refund@mail.example"
+	answer.InReplyTo = []mail.MessageID{"ask@mail.example"}
+	answer.References = []mail.MessageID{"ask@mail.example"}
+	answer.Cc = []mail.Address{{Email: "billing@vendor.example"}, {Email: "me@example.com"}}
+	return ask, answer
+}
+
+func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testing.T) {
+	ask, answer := ticket()
+	h := newHarness(t, ask, answer)
+	r := mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me, thanks.", "--no-open"))
+	for _, want := range []string{"answers Liam <liam@vendor.example>", `"Re: Refund request"`, "to      liam@vendor.example"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("compose output must say what the reply answers and who it goes to; lacks %q:\n%s", want, r.stdout)
+		}
+	}
+	if strings.Contains(r.stdout, "billing@") {
+		t.Errorf("a reply goes to the sender alone:\n%s", r.stdout)
+	}
+	id := draftIDOf(t, r)
+	rec, err := h.deps.Drafts.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := rec.InReplyTo; o == nil || o.ID != "liam" || o.ConversationID != "ticket" || o.MessageID != "CALag-refund@mail.example" {
+		t.Fatalf("the record must keep the original and its thread: %+v", rec.InReplyTo)
+	}
+	page, _ := os.ReadFile(h.deps.Drafts.PreviewPath(id))
+	for _, want := range []string{"In reply to", "Liam &lt;liam@vendor.example&gt;", "Re: Refund request", answer.DateHeader, "&lt;CALag-refund@mail.example&gt;"} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("preview must show what the draft answers; lacks %q", want)
+		}
+	}
+	eml, _ := os.ReadFile(filepath.Join(h.deps.Drafts.Dir, id+".eml"))
+	if bytes.Contains(eml, []byte("ticket")) {
+		t.Error("the provider thread id travels on the send call, never in the message")
+	}
+
+	c := mustOK(t, h.send("--commit", id))
+	if len(h.box.Sent) != 1 || !bytes.Equal(h.box.Sent[0].Bytes(), eml) {
+		t.Fatal("bytes sent differ from the .eml that was previewed")
+	}
+	if p := h.box.Parents[0]; p == nil || p.ID != "liam" || p.ConversationID != "ticket" {
+		t.Fatalf("Send must receive the previewed thread: %+v", p)
+	}
+	if !strings.Contains(c.stdout, "in its thread ticket") {
+		t.Errorf("commit must report the thread the provider used:\n%s", c.stdout)
+	}
+	hdr, _, _ := parts(t, h.box.Sent[0])
+	if hdr.Get("In-Reply-To") != "<CALag-refund@mail.example>" || hdr.Get("References") != "<ask@mail.example> <CALag-refund@mail.example>" {
+		t.Errorf("threading headers: In-Reply-To %q References %q", hdr.Get("In-Reply-To"), hdr.Get("References"))
+	}
+	if r := mustFail(t, h.send("--commit", id)); !strings.Contains(r.stderr, "single-use") {
+		t.Errorf("a sent reply is single-use like any draft: %s", r.stderr)
+	}
+}
+
+func TestSend_ReplyAllAddsEveryoneButMeAndCcAddsMore(t *testing.T) {
+	ask, answer := ticket()
+	h := newHarness(t, ask, answer)
+	id := draftIDOf(t, mustOK(t, h.send("--reply-all", "liam", "--cc", "boss@example.com", "--body", "Refund, please.", "--no-open")))
+	mustOK(t, h.send("--commit", id))
+	hdr, _, _ := parts(t, h.box.Sent[0])
+	if to := hdr.Get("To"); !strings.Contains(to, "liam@vendor.example") || strings.Contains(to, "me@example.com") {
+		t.Errorf("To = %q", to)
+	}
+	cc := hdr.Get("Cc")
+	if !strings.Contains(cc, "billing@vendor.example") || !strings.Contains(cc, "boss@example.com") || strings.Contains(cc, "me@example.com") {
+		t.Errorf("Cc = %q, want the original's other recipients and --cc, never me", cc)
+	}
+}
+
+func TestSend_ReplyRefusesWhatWouldReaddressOrRetitleIt(t *testing.T) {
+	ask, answer := ticket()
+	h := newHarness(t, ask, answer)
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"to with reply":        {[]string{"--reply", "liam", "--to", "x@example.com", "--body", "hi"}, "--cc"},
+		"subject with reply":   {[]string{"--reply", "liam", "--subject", "Keys", "--body", "hi"}, "subjects match"},
+		"reply and reply-all":  {[]string{"--reply", "liam", "--reply-all", "liam", "--body", "hi"}, "use one"},
+		"commit with reply":    {[]string{"--commit", "x", "--reply", "liam"}, "--reply"},
+		"unknown original":     {[]string{"--reply", "nope", "--body", "hi"}, "not found"},
+		"original without ids": {[]string{"--reply", "noid", "--body", "hi"}, "Message-ID"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "original without ids" {
+				m := msg("noid", "c9", day(2), "a@example.com", "x", para("A message whose sender's client wrote no Message-ID at all."))
+				m.MessageID = ""
+				h.box.Add(m)
+			}
+			r := mustFail(t, h.send(tc.args...))
+			if !strings.Contains(r.stderr, tc.want) {
+				t.Errorf("refusal must mention %q: %s", tc.want, r.stderr)
+			}
+		})
+	}
+	if len(h.box.Sent) != 0 {
+		t.Error("no refused reply may send")
+	}
+}
+
+// The record names the thread; the bytes name the original. A record that
+// no longer agrees with its bytes is refused before anything leaves.
+func TestSend_ReplyWhoseRecordNamesAnotherOriginalIsRefused(t *testing.T) {
+	ask, answer := ticket()
+	h := newHarness(t, ask, answer)
+	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
+	path := filepath.Join(h.deps.Drafts.Dir, id+".json")
+	b, _ := os.ReadFile(path)
+	os.WriteFile(path, bytes.Replace(b, []byte("CALag-refund@mail.example"), []byte("ask@mail.example"), 1), 0o600)
+	if r := mustFail(t, h.send("--commit", id)); !strings.Contains(r.stderr, "re-draft") {
+		t.Errorf("a record that disagrees with its bytes must be refused: %s", r.stderr)
+	}
+	if len(h.box.Sent) != 0 {
+		t.Error("a reply whose thread no longer matches its message was sent")
+	}
+	if rec, _ := h.deps.Drafts.Load(id); rec.State != drafts.Pending {
+		t.Errorf("nothing left, so the draft returns to pending, got %s", rec.State)
+	}
+}
+
+// placing reports a conversation of its choosing, or refuses, the way a
+// provider can that ignores or cannot honour the requested thread.
+type placing struct {
+	*memory.Mailbox
+	conv string
+	err  error
+}
+
+func (p placing) Send(ctx context.Context, m *mail.Prepared, parent *mail.Parent) (mail.Sent, error) {
+	if p.err != nil {
+		return mail.Sent{}, p.err
+	}
+	sent, err := p.Mailbox.Send(ctx, m, parent)
+	sent.ConversationID = p.conv
+	return sent, err
+}
+
+func TestSend_CommitSaysWhereTheProviderPutTheReply(t *testing.T) {
+	for name, tc := range map[string]struct {
+		conv string
+		want []string
+	}{
+		"elsewhere": {"stray-9", []string{"warning", "stray-9", "not the original's ticket", "mail-find thread liam"}},
+		"unsaid":    {"", []string{"does not report the thread", "mail-find thread liam"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ask, answer := ticket()
+			h := newHarness(t, ask, answer)
+			h.deps.Open = func(context.Context, string) (mail.Mailbox, error) { return placing{h.box, tc.conv, nil}, nil }
+			id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
+			r := mustOK(t, h.send("--commit", id))
+			for _, want := range tc.want {
+				if !strings.Contains(r.stdout, want) {
+					t.Errorf("commit output lacks %q:\n%s", want, r.stdout)
+				}
+			}
+		})
+	}
+}
+
+// A provider that refuses a reply before transmitting (Graph, when it
+// cannot address the reply as previewed) leaves the draft pending.
+func TestSend_ReplyRefusedBeforeTransmissionReturnsToPending(t *testing.T) {
+	ask, answer := ticket()
+	h := newHarness(t, ask, answer)
+	h.deps.Open = func(context.Context, string) (mail.Mailbox, error) {
+		return placing{h.box, "", fmt.Errorf("%w: recipients differ", mail.ErrNotSent)}, nil
+	}
+	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
+	mustFail(t, h.send("--commit", id))
+	if rec, _ := h.deps.Drafts.Load(id); rec.State != drafts.Pending {
+		t.Errorf("a refusal before transmission must leave the draft pending, got %s", rec.State)
 	}
 }

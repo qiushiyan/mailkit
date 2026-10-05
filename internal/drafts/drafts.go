@@ -7,7 +7,9 @@
 // compose time, the preview is rendered from them, their digest is pinned,
 // and Send receives them unchanged. A draft moves pending -> sending ->
 // sent; the move to sending happens before any network I/O, so a crash
-// can never leave a sent message looking pending.
+// can never leave a sent message looking pending. A reply's thread is part
+// of what was reviewed too: the record keeps the original it answers, and
+// a commit sends into exactly that conversation.
 package drafts
 
 import (
@@ -24,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -60,6 +63,7 @@ type Record struct {
 	Bcc         []string     `json:"bcc,omitzero"`
 	Subject     string       `json:"subject"`
 	MessageID   string       `json:"message_id"`
+	InReplyTo   *Original    `json:"in_reply_to,omitzero"`
 	Size        int64        `json:"size"`
 	SHA256      string       `json:"sha256"`
 	Attachments []Attachment `json:"attachments"`
@@ -68,6 +72,29 @@ type Record struct {
 	SentAs      string       `json:"sent_as,omitzero"`
 	ProviderID  string       `json:"provider_id,omitzero"`
 	Error       string       `json:"error,omitzero"`
+}
+
+// Original is the message a reply draft answers: where the reply goes, and
+// what the person approving it saw it answer. The thread lives here rather
+// than in the .eml -- providers take it on the send call -- and Open checks
+// it against the In-Reply-To the bytes carry.
+type Original struct {
+	ID             string `json:"id"`
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+	From           string `json:"from"`
+	Subject        string `json:"subject"`
+	Date           string `json:"date"`
+}
+
+// Parent is where a commit sends the draft: the original's conversation,
+// or nil for a conversation of its own.
+func (r Record) Parent() *mail.Parent {
+	if r.InReplyTo == nil {
+		return nil
+	}
+	o := r.InReplyTo
+	return &mail.Parent{ID: o.ID, ConversationID: o.ConversationID, MessageID: mail.MessageID(o.MessageID)}
 }
 
 // Attachment is one file folded into the draft at compose time.
@@ -85,6 +112,10 @@ type Compose struct {
 	Subject     string
 	Body        Body
 	Attach      []string
+	// Reply, when set, makes the draft an answer to Reply.Original: its
+	// recipients and subject come from the reply, and To and Subject must
+	// be left empty. Cc and Bcc add to it.
+	Reply *mail.Reply
 }
 
 // Body is the message body with its interpretation sealed in, the way
@@ -124,6 +155,22 @@ var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // Create builds the wire message and writes the draft. Nothing is sent.
 func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) {
+	if r := c.Reply; r != nil {
+		// A reply is addressed and titled by what it answers. A second
+		// source for either would decide who reads it, or whether Gmail
+		// threads it, by precedence.
+		if len(c.To) > 0 || c.Subject != "" {
+			return Record{}, nil, errors.New("a reply's recipients and subject come from the message it answers; leave To and Subject empty and add others with Cc")
+		}
+		c.To, c.Subject = addresses(r.To), r.Subject
+		cc := addresses(r.Cc)
+		for _, a := range c.Cc {
+			if !slices.ContainsFunc(slices.Concat(c.To, cc), func(b string) bool { return strings.EqualFold(a, b) }) {
+				cc = append(cc, a)
+			}
+		}
+		c.Cc = cc
+	}
 	if len(c.To) == 0 {
 		return Record{}, nil, errors.New("at least one --to recipient is required")
 	}
@@ -157,6 +204,10 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		m.SetGenHeader(gomail.Header("Bcc"), strings.Join(c.Bcc, ", "))
 	}
 	m.Subject(c.Subject)
+	if r := c.Reply; r != nil {
+		m.SetGenHeader(gomail.HeaderInReplyTo, r.InReplyTo)
+		m.SetGenHeader(gomail.HeaderReferences, r.References)
+	}
 	switch c.Body.kind {
 	case bodyHTML:
 		m.SetBodyString(gomail.TypeTextHTML, c.Body.source)
@@ -186,8 +237,9 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		atts = append(atts, Attachment{Name: filepath.Base(p), Path: p, Size: st.Size()})
 	}
 	id := draftID(now, c.Subject)
-	msgID := fmt.Sprintf("<%s@mailkit>", id)
-	m.SetMessageIDWithValue(msgID)
+	// SetMessageIDWithValue adds the brackets itself.
+	m.SetMessageIDWithValue(id + "@mailkit")
+	msgID := "<" + id + "@mailkit>"
 
 	var buf bytes.Buffer
 	if _, err := m.WriteTo(&buf); err != nil {
@@ -205,6 +257,11 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 	if rec.Attachments == nil {
 		rec.Attachments = []Attachment{}
 	}
+	if r := c.Reply; r != nil {
+		o := r.Original
+		rec.InReplyTo = &Original{ID: o.ID, ConversationID: o.ConversationID, MessageID: string(o.MessageID),
+			From: o.From.String(), Subject: o.Subject, Date: o.DateHeader}
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return Record{}, nil, err
 	}
@@ -215,6 +272,14 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		return Record{}, nil, err
 	}
 	return rec, prepared, nil
+}
+
+func addresses(as []mail.Address) []string {
+	var out []string
+	for _, a := range as {
+		out = append(out, a.Email)
+	}
+	return out
 }
 
 func expand(p string) string {
@@ -287,6 +352,13 @@ func (s Store) Open(r Record) (*mail.Prepared, error) {
 	if p.Digest() != r.SHA256 {
 		return nil, fmt.Errorf("draft %s changed since its preview -- the bytes no longer match what was reviewed; re-draft", r.ID)
 	}
+	want := ""
+	if r.InReplyTo != nil {
+		want = "<" + r.InReplyTo.MessageID + ">"
+	}
+	if got := strings.TrimSpace(p.Header("In-Reply-To")); got != want {
+		return nil, fmt.Errorf("draft %s would go to a different conversation than its message answers (record %q, message %q); re-draft", r.ID, want, got)
+	}
 	return p, nil
 }
 
@@ -338,14 +410,14 @@ func (s Store) Release(r Record, reason error) error {
 }
 
 // Finish records the outcome of a claimed send. A provider that refused the
-// message before accepting any of it (too large, not authenticated) leaves
-// the draft pending; any other failure is an unknown outcome, because the
-// bytes may have left.
+// message before accepting any of it (too large, not authenticated, or
+// refused outright) leaves the draft pending; any other failure is an
+// unknown outcome, because the bytes may have left.
 func (s Store) Finish(r Record, providerID, sentAs string, sendErr error, now time.Time) error {
 	switch {
 	case sendErr == nil:
 		r.State, r.SentAt, r.SentAs, r.ProviderID = Sent, now, sentAs, providerID
-	case errors.Is(sendErr, mail.ErrTooLarge) || errors.Is(sendErr, mail.ErrAuth):
+	case errors.Is(sendErr, mail.ErrTooLarge) || errors.Is(sendErr, mail.ErrAuth) || errors.Is(sendErr, mail.ErrNotSent):
 		return s.Release(r, sendErr)
 	default:
 		r.State, r.Error = Unknown, sendErr.Error()
@@ -381,8 +453,10 @@ func (s Store) Recent(limit int) ([]Record, error) {
 // actually go out, not what the flags said.
 type Parsed struct {
 	From, To, Cc, Bcc, Subject, Date string
-	BodyText                         string
-	BodyHTML                         string
+	// InReplyTo is the threading header as the bytes carry it.
+	InReplyTo string
+	BodyText  string
+	BodyHTML  string
 	// HasText/HasHTML record part presence: an empty text/html part is a
 	// real (and alarming) state, distinct from a message with no HTML part.
 	HasText, HasHTML bool
@@ -404,7 +478,7 @@ func Parse(p *mail.Prepared) (Parsed, error) {
 		}
 		return v
 	}
-	out := Parsed{From: hdr("From"), To: hdr("To"), Cc: hdr("Cc"), Bcc: hdr("Bcc"), Subject: hdr("Subject"), Date: hdr("Date")}
+	out := Parsed{From: hdr("From"), To: hdr("To"), Cc: hdr("Cc"), Bcc: hdr("Bcc"), Subject: hdr("Subject"), Date: hdr("Date"), InReplyTo: m.Header.Get("In-Reply-To")}
 	if err := walk(m.Header.Get("Content-Type"), m.Header.Get("Content-Transfer-Encoding"), m.Body, &out); err != nil {
 		return Parsed{}, err
 	}

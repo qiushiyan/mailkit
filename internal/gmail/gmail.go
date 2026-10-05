@@ -261,17 +261,24 @@ func (m *Mailbox) Open(ctx context.Context, h mail.Handle, w io.Writer) error {
 	return err
 }
 
-func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared) (string, error) {
+// Send posts the prepared bytes as raw. Gmail threads a sent message only
+// when the request names the thread, and then only when the message's
+// In-Reply-To/References and Subject agree with it: the bytes carry those,
+// the request carries the thread. The response names the thread Gmail
+// actually used, which is reported rather than assumed.
+func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared, parent *mail.Parent) (mail.Sent, error) {
 	if p.Size() > sendLimit {
-		return "", m.wrap("send", mail.ErrTooLarge)
+		return mail.Sent{}, m.wrap("send", mail.ErrTooLarge)
 	}
-	sent, err := m.svc.Users.Messages.Send("me", &gm.Message{
-		Raw: base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(p.Bytes()),
-	}).Context(ctx).Do()
+	msg := &gm.Message{Raw: base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(p.Bytes())}
+	if parent != nil {
+		msg.ThreadId = parent.ConversationID
+	}
+	sent, err := m.svc.Users.Messages.Send("me", msg).Context(ctx).Do()
 	if err != nil {
-		return "", m.wrap("send", err)
+		return mail.Sent{}, m.wrap("send", err)
 	}
-	return sent.Id, nil
+	return mail.Sent{ID: sent.Id, ConversationID: sent.ThreadId}, nil
 }
 
 // --- translation: Gmail JSON -> mail types ---------------------------------
@@ -299,6 +306,9 @@ func envelope(msg *gm.Message) mail.Envelope {
 		Cc:             mail.ParseAddressList(h["cc"]),
 		Subject:        h["subject"],
 		Snippet:        msg.Snippet,
+		ReplyTo:        mail.ParseAddressList(h["reply-to"]),
+		InReplyTo:      mail.ParseMessageIDs(h["in-reply-to"]),
+		References:     mail.ParseMessageIDs(h["references"]),
 	}
 	if msg.InternalDate > 0 {
 		e.Received = time.UnixMilli(msg.InternalDate).UTC()

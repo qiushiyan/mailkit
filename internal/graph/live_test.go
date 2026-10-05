@@ -8,8 +8,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/graph"
 	"github.com/qiushiyan/mailkit/internal/mail"
 	"github.com/qiushiyan/mailkit/internal/render"
@@ -123,6 +127,10 @@ func TestLive_FirstContact(t *testing.T) {
 		}
 	})
 
+	t.Run("6 a reply lands in the conversation, addressed as previewed", func(t *testing.T) {
+		liveReply(t, box)
+	})
+
 	if *record {
 		t.Run("record", func(t *testing.T) {
 			hits, err := box.Search(ctx, mail.Criteria{}, 3)
@@ -144,5 +152,71 @@ func TestLive_FirstContact(t *testing.T) {
 			}
 			t.Logf("recorded %s -- review, then replace messages.json and delete README.txt's doc-derived notice", p)
 		})
+	}
+}
+
+// liveReply answers a real message, so it runs only when told which one --
+// MAILKIT_LIVE_REPLY_TO=<id>, in a conversation you own. It settles what
+// the reference leaves open (graph.go, replyAction): the reply must join
+// the original's conversation, and reach exactly the recipients the draft
+// names -- not more, not fewer.
+func liveReply(t *testing.T, box *graph.Mailbox) {
+	id := os.Getenv("MAILKIT_LIVE_REPLY_TO")
+	if id == "" {
+		t.Skip("set MAILKIT_LIVE_REPLY_TO to a message id in a conversation you own; this sends a real reply")
+	}
+	ctx := t.Context()
+	acct, err := box.Account(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, err := box.Fetch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mail.NewReply(orig.Envelope, []string{acct.Address}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "mailkit-live-" + time.Now().Format("20060102T150405")
+	rec, p, err := drafts.Store{Dir: t.TempDir()}.Create(drafts.Compose{
+		Account: "outlook", From: acct.Address, Reply: &r,
+		Body: drafts.PlainBody("mailkit live check " + token + ": this reply should sit in the original's conversation."),
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.Send(ctx, p, rec.Parent()); err != nil {
+		t.Fatal(err)
+	}
+	// 202 means accepted, not filed: poll Sent Items' conversation briefly.
+	var got *mail.Message
+	for range 15 {
+		msgs, err := box.Conversation(ctx, orig.ConversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range msgs {
+			if strings.Contains(render.Text(msgs[i].Body), token) {
+				got = &msgs[i]
+			}
+		}
+		if got != nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if got == nil {
+		t.Fatalf("no reply carrying %s joined conversation %s -- check Sent Items for where it went", token, orig.ConversationID)
+	}
+	want := append(slices.Clone(rec.To), rec.Cc...)
+	var reached []string
+	for _, a := range append(slices.Clone(got.To), got.Cc...) {
+		reached = append(reached, a.Email)
+	}
+	slices.Sort(want)
+	slices.Sort(reached)
+	if !slices.EqualFunc(want, reached, strings.EqualFold) {
+		t.Errorf("the reply reached %v; the draft named %v", reached, want)
 	}
 }

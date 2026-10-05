@@ -7,11 +7,13 @@
 // models do not express, and the gate's promise is that those bytes go out
 // unchanged. Five endpoints are small enough to type by hand.
 //
-// Graph differs from Gmail in three ways this package absorbs: $search and
+// Graph differs from Gmail in four ways this package absorbs: $search and
 // $filter cannot appear in one request, so a query is compiled to one and
 // the rest is narrowed locally over pages; attachments come in three kinds,
-// two of which hold no bytes; and the API offers uniqueBody, its own quote
-// folding, which is passed up as a hint.
+// two of which hold no bytes; the API offers uniqueBody, its own quote
+// folding, which is passed up as a hint; and a reply joins its
+// conversation only through Graph's own reply actions, which choose the
+// recipients themselves (see replyAction).
 //
 // Unverified against a live mailbox (tenant consent pending). Every shape
 // here comes from the Graph reference; the recording run replaces them.
@@ -22,10 +24,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -134,20 +139,29 @@ type itemBody struct {
 }
 
 type message struct {
-	ID                string       `json:"id"`
-	InternetMessageID string       `json:"internetMessageId"`
-	ConversationID    string       `json:"conversationId"`
-	ReceivedDateTime  string       `json:"receivedDateTime"`
-	SentDateTime      string       `json:"sentDateTime"`
-	Subject           string       `json:"subject"`
-	BodyPreview       string       `json:"bodyPreview"`
-	HasAttachments    bool         `json:"hasAttachments"`
-	From              *recipient   `json:"from"`
-	ToRecipients      []recipient  `json:"toRecipients"`
-	CcRecipients      []recipient  `json:"ccRecipients"`
-	Body              *itemBody    `json:"body"`
-	UniqueBody        *itemBody    `json:"uniqueBody"`
-	Attachments       []attachment `json:"attachments"`
+	ID                string      `json:"id"`
+	InternetMessageID string      `json:"internetMessageId"`
+	ConversationID    string      `json:"conversationId"`
+	ReceivedDateTime  string      `json:"receivedDateTime"`
+	SentDateTime      string      `json:"sentDateTime"`
+	Subject           string      `json:"subject"`
+	BodyPreview       string      `json:"bodyPreview"`
+	HasAttachments    bool        `json:"hasAttachments"`
+	From              *recipient  `json:"from"`
+	ReplyTo           []recipient `json:"replyTo"`
+	ToRecipients      []recipient `json:"toRecipients"`
+	CcRecipients      []recipient `json:"ccRecipients"`
+	// InternetMessageHeaders is returned only when selected, and only for
+	// mail that came through transport -- a sent item may have none.
+	InternetMessageHeaders []header     `json:"internetMessageHeaders"`
+	Body                   *itemBody    `json:"body"`
+	UniqueBody             *itemBody    `json:"uniqueBody"`
+	Attachments            []attachment `json:"attachments"`
+}
+
+type header struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type attachment struct {
@@ -167,23 +181,34 @@ type listing struct {
 	NextLink string    `json:"@odata.nextLink"`
 }
 
-const selectFields = "id,internetMessageId,conversationId,receivedDateTime,sentDateTime,subject,from,toRecipients,ccRecipients,bodyPreview,hasAttachments"
+const selectFields = "id,internetMessageId,conversationId,receivedDateTime,sentDateTime,subject,from,replyTo,toRecipients,ccRecipients,bodyPreview,hasAttachments"
+
+// fetchFields adds what one fetched message carries beyond a listing row:
+// the bodies, and the transport headers a reply continues the chain from.
+const fetchFields = selectFields + ",body,uniqueBody,internetMessageHeaders"
 
 // --- Mailbox ---------------------------------------------------------------
 
 func (m *Mailbox) Account(ctx context.Context) (mail.Account, error) {
+	addr, err := m.address(ctx)
+	if err != nil {
+		return mail.Account{}, m.wrap("account", err)
+	}
+	return mail.Account{Address: addr, SendLimit: sendLimit}, nil
+}
+
+func (m *Mailbox) address(ctx context.Context) (string, error) {
 	var me struct {
 		Mail              string `json:"mail"`
 		UserPrincipalName string `json:"userPrincipalName"`
 	}
 	if err := m.do(ctx, http.MethodGet, "/me?$select=mail,userPrincipalName", nil, "", &me); err != nil {
-		return mail.Account{}, m.wrap("account", err)
+		return "", err
 	}
-	addr := me.Mail
-	if addr == "" {
-		addr = me.UserPrincipalName
+	if me.Mail != "" {
+		return me.Mail, nil
 	}
-	return mail.Account{Address: addr, SendLimit: sendLimit}, nil
+	return me.UserPrincipalName, nil
 }
 
 func (m *Mailbox) Resolve(ctx context.Context, id mail.MessageID) (mail.Envelope, error) {
@@ -282,7 +307,7 @@ func (m *Mailbox) Fetch(ctx context.Context, id string) (mail.Message, error) {
 // truncated, never as absent.
 func (m *Mailbox) fetch(ctx context.Context, id string) (mail.Message, error) {
 	q := url.Values{}
-	q.Set("$select", selectFields+",body,uniqueBody")
+	q.Set("$select", fetchFields)
 	q.Set("$expand", "attachments($select=id,name,contentType,size,isInline,contentId)")
 	var msg message
 	if err := m.do(ctx, http.MethodGet, "/me/messages/"+url.PathEscape(id)+"?"+q.Encode(), nil, "", &msg); err != nil {
@@ -372,15 +397,94 @@ func (m *Mailbox) Open(ctx context.Context, h mail.Handle, w io.Writer) error {
 	return m.wrap("open", m.do(ctx, http.MethodGet, path, nil, "", w))
 }
 
-// Send posts the prepared message in MIME form. Graph answers 202 with no
-// body, so there is no provider id to return; the draft record keeps the
-// RFC Message-ID for recovery.
-func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared) (string, error) {
+// Send posts the prepared message in MIME form: to /me/sendMail when it
+// starts a conversation, to the parent's reply action when it answers one.
+// Graph answers 202 with no body either way, so there is no provider id or
+// conversation to report; the draft record keeps the RFC Message-ID for
+// recovery.
+func (m *Mailbox) Send(ctx context.Context, p *mail.Prepared, parent *mail.Parent) (mail.Sent, error) {
 	if p.Size() > sendLimit {
-		return "", m.wrap("send", mail.ErrTooLarge)
+		return mail.Sent{}, m.wrap("send", mail.ErrTooLarge)
+	}
+	path := "/me/sendMail"
+	if parent != nil {
+		action, err := m.replyAction(ctx, p, parent.ID)
+		if err != nil {
+			return mail.Sent{}, m.wrap("send", fmt.Errorf("%w: %w", mail.ErrNotSent, err))
+		}
+		path = "/me/messages/" + url.PathEscape(parent.ID) + "/" + action
 	}
 	body := base64.StdEncoding.EncodeToString(p.Bytes())
-	return "", m.wrap("send", m.do(ctx, http.MethodPost, "/me/sendMail", bytes.NewBufferString(body), "text/plain", nil))
+	return mail.Sent{}, m.wrap("send", m.do(ctx, http.MethodPost, path, bytes.NewBufferString(body), "text/plain", nil))
+}
+
+// replyAction picks the reply action that sends p, as a reply to the
+// message parentID, to exactly the recipients p names -- or says why none
+// can.
+//
+// Exchange groups a conversation by Thread-Index, not by In-Reply-To or
+// References, so sendMail with threading headers starts a conversation of
+// its own; the reply actions are the way into one (createReply would need
+// Mail.ReadWrite, which this app does not ask for). But the MIME form of
+// the reply actions addresses the reply itself: /reply "uses the sender of
+// the original message as recipient", /replyAll "loads the sender and all
+// recipients of the original message". The reference does not say whether
+// the MIME To and Cc are honoured on top, nor whether a Reply-To wins over
+// the sender as it does in the JSON form. So an action is used only when
+// every reading of the reference reaches exactly the recipients that were
+// previewed; anything else is refused before a byte leaves. The account's
+// own address is left out of both sides: whether Graph copies the account
+// on its own reply is not a recipient anyone approved or missed.
+// Doc-derived until a tenant exists (outlook-status.md).
+func (m *Mailbox) replyAction(ctx context.Context, p *mail.Prepared, parentID string) (string, error) {
+	if p.Header("Bcc") != "" {
+		return "", errors.New("Outlook's reply actions choose a reply's recipients themselves and never include a Bcc; draft the reply without --bcc")
+	}
+	q := url.Values{}
+	q.Set("$select", "from,replyTo,toRecipients,ccRecipients")
+	var orig message
+	if err := m.do(ctx, http.MethodGet, "/me/messages/"+url.PathEscape(parentID)+"?"+q.Encode(), nil, "", &orig); err != nil {
+		return "", err
+	}
+	self, err := m.address(ctx)
+	if err != nil {
+		return "", err
+	}
+	set := func(groups ...[]mail.Address) map[string]bool {
+		out := map[string]bool{}
+		for _, g := range groups {
+			for _, a := range g {
+				if e := strings.ToLower(a.Email); e != "" && !strings.EqualFold(e, self) {
+					out[e] = true
+				}
+			}
+		}
+		return out
+	}
+	var sender []mail.Address
+	if orig.From != nil {
+		sender = []mail.Address{addr(*orig.From)}
+	}
+	replyTo := sender
+	if len(orig.ReplyTo) > 0 {
+		replyTo = addrs(orig.ReplyTo)
+	}
+	to, cc := addrs(orig.ToRecipients), addrs(orig.CcRecipients)
+	readings := []struct {
+		action string
+		sets   []map[string]bool
+	}{
+		{"reply", []map[string]bool{set(sender), set(replyTo)}},
+		{"replyAll", []map[string]bool{set(sender, to, cc), set(replyTo, to, cc)}},
+	}
+	want := set(mail.ParseAddressList(p.Header("To")), mail.ParseAddressList(p.Header("Cc")))
+	for _, r := range readings {
+		if maps.Equal(r.sets[0], want) && maps.Equal(r.sets[1], want) {
+			return r.action, nil
+		}
+	}
+	return "", fmt.Errorf("Outlook's reply actions address a reply themselves -- to the original's sender, or to everyone on it for reply-all -- and this draft's recipients (%s) are not one of those, so it cannot be sent as a reply there without reaching people the preview did not show; re-draft with --reply or --reply-all and no extra --cc",
+		strings.Join(slices.Sorted(maps.Keys(want)), ", "))
 }
 
 // --- translation ----------------------------------------------------------
@@ -408,6 +512,15 @@ func envelope(m message) mail.Envelope {
 		Subject:        m.Subject,
 		Snippet:        m.BodyPreview,
 		HasAttachments: m.HasAttachments,
+		ReplyTo:        addrs(m.ReplyTo),
+	}
+	for _, h := range m.InternetMessageHeaders {
+		switch strings.ToLower(h.Name) {
+		case "in-reply-to":
+			e.InReplyTo = mail.ParseMessageIDs(h.Value)
+		case "references":
+			e.References = mail.ParseMessageIDs(h.Value)
+		}
 	}
 	if m.From != nil {
 		e.From = addr(*m.From)
@@ -466,7 +579,7 @@ func translate(m message) (mail.Message, error) {
 // expanded, for recording fixtures from the real writer.
 func (m *Mailbox) RawMessage(ctx context.Context, id string) (map[string]any, error) {
 	q := url.Values{}
-	q.Set("$select", selectFields+",body,uniqueBody")
+	q.Set("$select", fetchFields)
 	q.Set("$expand", "attachments($select=id,name,contentType,size,isInline,contentId)")
 	var out map[string]any
 	if err := m.do(ctx, http.MethodGet, "/me/messages/"+url.PathEscape(id)+"?"+q.Encode(), nil, "", &out); err != nil {

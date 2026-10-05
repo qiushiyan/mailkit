@@ -9,10 +9,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/gmail"
 	"github.com/qiushiyan/mailkit/internal/mail"
@@ -107,6 +109,58 @@ func TestLive_SearchResolveOpen(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+// TestLive_ReplyThreads sends a real reply, so it runs only when told which
+// message to answer -- one in a thread you own, since the reply goes to its
+// sender:
+//
+//	MAILKIT_LIVE_REPLY_TO=<id> go test -tags live ./internal/gmail -run LiveReply -v
+//
+// The reply is composed the way send-mail composes one and must land in
+// the original's thread, as Gmail reports it and as the thread reads back.
+func TestLive_ReplyThreads(t *testing.T) {
+	id := os.Getenv("MAILKIT_LIVE_REPLY_TO")
+	if id == "" {
+		t.Skip("set MAILKIT_LIVE_REPLY_TO to a message id in a thread you own; this sends a real reply")
+	}
+	box := liveBox(t)
+	ctx := t.Context()
+	acct, err := box.Account(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, err := box.Fetch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mail.NewReply(orig.Envelope, []string{acct.Address}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, p, err := drafts.Store{Dir: t.TempDir()}.Create(drafts.Compose{
+		Account: "gmail", From: acct.Address, Reply: &r,
+		Body: drafts.PlainBody("mailkit live check: this reply should sit in the original's thread (" + time.Now().Format(time.RFC3339) + ")."),
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("replying to %s %q from %s, to %v", orig.ID, orig.Subject, orig.From, rec.To)
+	sent, err := box.Send(ctx, p, rec.Parent())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("sent %s into thread %s", sent.ID, sent.ConversationID)
+	if sent.ConversationID != orig.ConversationID {
+		t.Errorf("Gmail put the reply in thread %s, not the original's %s", sent.ConversationID, orig.ConversationID)
+	}
+	thread, err := box.Conversation(ctx, orig.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(thread, func(m mail.Message) bool { return m.ID == sent.ID }) {
+		t.Errorf("thread %s does not hold the reply %s", orig.ConversationID, sent.ID)
 	}
 }
 

@@ -69,6 +69,18 @@ func RenderPreview(rec Record, p Parsed) string {
 	meta := row("Account", rec.Account) + row("From", p.From) + row("To", p.To) + row("Cc", p.Cc) +
 		row("Bcc", p.Bcc) + row("Format", format) + row("Size", HumanSize(rec.Size))
 
+	// What a reply answers is what the person approves it as answering, so
+	// it leads the page. The original's sender, subject and date come from
+	// the record; the Message-ID is the one the bytes name, so a reply
+	// threaded under the wrong message would show it here.
+	tag, reply := "Draft", ""
+	if o := rec.InReplyTo; o != nil {
+		tag = "Reply"
+		reply = fmt.Sprintf(`<div class="card"><h2>In reply to</h2><dl>%s</dl></div>`,
+			row("From", o.From)+row("Subject", o.Subject)+row("Date", o.Date)+
+				row("Message-ID", strings.TrimSpace(p.InReplyTo))+row("Thread", o.ConversationID))
+	}
+
 	att := ""
 	if len(p.Attachments) > 0 {
 		var items strings.Builder
@@ -99,8 +111,9 @@ func RenderPreview(rec Record, p Parsed) string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Draft — %s</title><style>%s</style></head>
 <body><main>
-  <div class="tag">Draft &middot; not sent</div>
+  <div class="tag">%s &middot; not sent</div>
   <h1>%s</h1>
+  %s
   <div class="card"><dl>%s</dl></div>
   <div class="card"><h2>Body</h2>%s</div>
   %s
@@ -108,5 +121,5 @@ func RenderPreview(rec Record, p Parsed) string {
   <pre class="cmd">send-mail --commit %s</pre>
   <p class="foot">Drafted %s. Single-use: committing sends exactly these bytes (sha256 %s…) and marks the draft sent.</p>
 </main></body></html>
-`, e(p.Subject), previewCSS, e(p.Subject), meta, body, att, e(rec.ID), e(rec.CreatedAt.Format("2006-01-02 15:04:05")), e(rec.SHA256[:12]))
+`, e(p.Subject), previewCSS, tag, e(p.Subject), reply, meta, body, att, e(rec.ID), e(rec.CreatedAt.Format("2006-01-02 15:04:05")), e(rec.SHA256[:12]))
 }

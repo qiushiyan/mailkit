@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
+	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
 // Rule: a draft is sent once. The claim is decided by who holds the lock,
@@ -40,5 +41,38 @@ func TestClaim_IsDecidedByOwnershipNotAge(t *testing.T) {
 	syscall.Flock(int(fh.Fd()), syscall.LOCK_UN)
 	if _, err := s.Claim(rec.ID); err != nil {
 		t.Fatalf("once released, the claim must go through: %v", err)
+	}
+}
+
+// Rule: a reply is addressed and titled by what it answers. A second source
+// for either would decide who reads it, or whether Gmail threads it, by
+// precedence -- so Create refuses one, whoever the caller is.
+func TestCreate_ReplyTakesItsRecipientsAndSubjectFromTheOriginal(t *testing.T) {
+	s := drafts.Store{Dir: t.TempDir()}
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	orig := mail.Envelope{ID: "liam", ConversationID: "ticket", MessageID: "CALag@mail.example",
+		From: mail.Address{Name: "Liam", Email: "liam@vendor.example"}, Subject: "Refund request"}
+	r, err := mail.NewReply(orig, []string{"me@example.com"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := drafts.Compose{Account: "memory", From: "me@example.com", Body: drafts.PlainBody("Refund, please."), Reply: &r}
+	for name, c := range map[string]drafts.Compose{
+		"a second To":      func() drafts.Compose { c := base; c.To = []string{"x@example.com"}; return c }(),
+		"a second Subject": func() drafts.Compose { c := base; c.Subject = "Keys"; return c }(),
+	} {
+		if _, _, err := s.Create(c, now); err == nil {
+			t.Errorf("%s: a reply with %s must be refused", name, name)
+		}
+	}
+	rec, p, err := s.Create(base, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Subject != "Re: Refund request" || len(rec.To) != 1 || rec.To[0] != "liam@vendor.example" {
+		t.Errorf("record: subject %q to %v", rec.Subject, rec.To)
+	}
+	if p.Header("In-Reply-To") != "<CALag@mail.example>" || rec.Parent().ConversationID != "ticket" {
+		t.Errorf("thread: In-Reply-To %q, parent %+v", p.Header("In-Reply-To"), rec.Parent())
 	}
 }

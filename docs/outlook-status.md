@@ -12,8 +12,8 @@ in front of the last step.
 | Redirect URI + public client flows | configured |
 | Delegated permissions | `Mail.Read`, `Mail.Send`, `email`, `User.Read` |
 | Consent | **not granted** -- blocks everything |
-| `OutlookBackend` | written, interface-aligned with Gmail, **never run** |
-| `scripts/verify-outlook.py` | ready; five checks, one command |
+| `internal/graph` adapter | written from the Graph reference, passes the contract suite on doc-derived cassettes, **never run** live |
+| first-contact checks | `go test -tags live ./internal/graph -run Live`, ready |
 
 Tenant: `125a5575-f4d7-4f2b-97b2-9c8f1fad37ca`
 
@@ -69,18 +69,32 @@ are narrower than they sound:
 
 Keep `Mail.ReadWrite` off the request. It was added at first and removed:
 "read and write access to user mail" is a materially bigger ask than
-"read user mail", and nothing here needs it.
+"read user mail", and nothing here needs it -- replies included: they go
+through Graph's reply actions under `Mail.Send`, not `createReply`.
 
 ## When consent lands
 
 ```
-m365 login --appId <APP_ID> --tenant 125a5575-f4d7-4f2b-97b2-9c8f1fad37ca
-python3 scripts/verify-outlook.py
+# ~/.config/mailkit/outlook.json: {"client_id": "<APP_ID>", "tenant_id": "125a5575-f4d7-4f2b-97b2-9c8f1fad37ca"}
+mail-find auth login --account outlook
+go test -tags live ./internal/graph -run Live -v
+MAILKIT_LIVE_REPLY_TO=<id> go test -tags live ./internal/graph -run Live -v   # check 6 sends a real reply
+go test -tags live ./internal/graph -run Live -record                         # then replace the doc-derived cassettes
 ```
 
-The five checks and why each exists are in `operations.md`. Every one names a
-failure that already happened once on Gmail, so treat a pass as evidence and a
-skip as an open question.
+Checks 1-5 are the questions in `operations.md` § What to verify on Outlook
+before trusting any of it; each names a failure that already happened once
+on Gmail, so treat a pass as evidence and a skip as an open question.
+
+Check 6 settles what the Graph reference leaves open about replies: whether
+a reply sent through `/reply` or `/replyAll` joins the original's
+conversation and reaches exactly the recipients the draft names
+(`docs/go-design.md` § Replies). It answers a real message, so it runs only
+when `MAILKIT_LIVE_REPLY_TO` names one in a conversation you own. Meanwhile
+`replyAction` (`internal/graph/graph.go`) refuses the replies whose
+recipients the reply actions might choose differently -- an extra `--cc`,
+any `--bcc`, an original with a separate Reply-To, a reply to one's own
+message -- and what check 6 shows decides whether that guard can loosen.
 
 ## If consent is refused
 

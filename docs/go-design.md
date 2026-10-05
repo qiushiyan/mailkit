@@ -52,10 +52,12 @@ type Mailbox interface {
     Fetch(ctx, id string) (Message, error)                  // one call: envelope, body, parts
     Conversation(ctx, convID string) ([]Message, error)     // ascending by Received; paginated inside
     Open(ctx, h Handle, w io.Writer) error                  // StoredPart only; ErrNoBytes otherwise
-    Send(ctx, p Prepared) (providerID string, err error)    // the prepared bytes, encoded for the provider; ErrTooLarge
+    Send(ctx, p *Prepared, parent *Parent) (Sent, error)   // the prepared bytes, encoded for the provider; ErrTooLarge, ErrNotSent
 }
 
 type Account struct{ Address string; SendLimit int64 } // bytes of the prepared message
+type Parent  struct{ ID, ConversationID string; MessageID MessageID } // the message a reply answers; nil starts a conversation
+type Sent    struct{ ID, ConversationID string }       // what the provider reported; empty where it says nothing
 
 type Criteria struct {                // conjunction; zero fields unconstrained
     Phrases      []string             // exact, anywhere in the message
@@ -75,6 +77,8 @@ type Envelope struct {
     To, Cc             []Address
     Subject, Snippet   string
     HasAttachments     bool
+    ReplyTo            []Address   // where the sender asked replies to go
+    InReplyTo, References []MessageID // its own threading headers, as sent
 }
 
 type Message struct {
@@ -100,29 +104,33 @@ type EmbeddedPart struct{ Item *Message; Truncated bool } // itemAttachment; ada
 
 Invariants: `Search` is exact on every adapter — the adapter compiles a
 coarse provider query, pages, fetches what its residual predicates need, and
-narrows until it has `limit` matches or the provider is exhausted. `Parts`
-is document order. An unknown Graph `@odata.type` is a loud error. Errors
-are sentinels (`ErrAuth`, `ErrNotFound`, `ErrNoBytes`, `ErrTooLarge`)
-wrapped with provider and operation. Adapters are registered in the
-composition root (`cmd/`), one explicit line each.
+narrows until it has `limit` matches or the provider is exhausted. `Send`
+with a parent puts the message in the parent's conversation, addressed
+exactly as its headers say, or refuses with `ErrNotSent` before a byte
+leaves. `Parts` is document order. An unknown Graph `@odata.type` is a
+loud error. Errors are sentinels (`ErrAuth`, `ErrNotFound`, `ErrNoBytes`,
+`ErrTooLarge`, `ErrNotSent`) wrapped with provider and operation. Adapters
+are registered in the composition root (`internal/wiring`), one explicit
+case each.
 
 What the adapters hide: Gmail `q=` compilation and `rfc822msgid:`; Graph's
 `$search`/`$filter` choice and local narrowing; paging; MIME walking and
 base64url; `attachmentId` keying; Content-ID naming; OData type mapping;
-auth and token storage.
+how each provider places a reply (`threadId`, Graph's reply actions); auth
+and token storage.
 
 ## 4. The shared layer
 
 ```
 cmd/mail-find, cmd/send-mail   Cobra; persistent --account/--text/--raw
-internal/mail                  port, types, Criteria.Match, the search grammar → Criteria, sentinel errors
+internal/mail                  port, types, Criteria.Match, the search grammar → Criteria, reply derivation, sentinel errors
 internal/gmail, internal/graph adapters
 internal/memory                test adapter: []Message + part bytes; Search = filter by Criteria.Match
 internal/render                HTML → text AND remote-image references in one parse; tidy; quote split; coverage; transcript
 internal/cluster               identifier extraction, probes, scoring, too-common (context.py)
 internal/images                remote fetch with deadline; classify by min edge and area
 internal/attachments           destination allocation (batch, -2 suffixes, filepath.Rel containment), sanitisation — the one owner
-internal/drafts                compose → .eml (markdown → text+HTML alternative), preview from the .eml, state machine, commit
+internal/drafts                compose → .eml (markdown → text+HTML alternative, reply headers), preview from the .eml, state machine, commit
 ```
 
 Rules carried, and where each now lives:
@@ -158,15 +166,20 @@ The reviewed bytes are the sent bytes, literally:
 1. `send-mail` compose builds the complete RFC 5322 message with go-mail —
    recipients incl. Bcc header, subject, body, attachment bytes, a
    deterministic `Message-ID` — and writes `<id>.eml` plus `<id>.json`
-   (state, account, sha256 and size of the `.eml`). The body is markdown by
-   default, compiled before the bytes are pinned into a text+HTML
-   `multipart/alternative`; `--format text|html` sends one part verbatim.
-   The compile rules and their refusals: `docs/markdown-compose.md`.
-2. The preview is rendered by parsing the `.eml`, not from the flags.
-3. `--commit <id>`: load; refuse unless state is `pending`; verify sha256;
-   move to `sending` (atomic rename) *before* any network I/O; `Send`; move
-   to `sent` with the provider id. A failure after the provider may have
-   accepted leaves `unknown`, never retryable silently. Recovery is by
+   (state, account, sha256 and size of the `.eml`, and for a reply the
+   original it answers). The body is markdown by default, compiled before
+   the bytes are pinned into a text+HTML `multipart/alternative`;
+   `--format text|html` sends one part verbatim. The compile rules and
+   their refusals: `docs/markdown-compose.md`.
+2. The preview is rendered by parsing the `.eml`, not from the flags; a
+   reply's leads with the original it answers.
+3. `--commit <id>`: load; refuse unless state is `pending`; verify sha256
+   and, for a reply, that the record's original is the message the bytes'
+   `In-Reply-To` names; move to `sending` (atomic rename) *before* any
+   network I/O; `Send`, with the record's parent; move to `sent` with the
+   provider id. A refusal marked `ErrNotSent` (or `ErrTooLarge`, `ErrAuth`)
+   returns the draft to `pending`; any other failure after the provider may
+   have accepted leaves `unknown`, never retryable silently. Recovery is by
    subject and time: the live send showed **Gmail rewrites the Message-ID**
    (`…@mail.gmail.com`), so the deterministic id is not a handle there; the
    provider id is stored once known.
@@ -175,8 +188,54 @@ The reviewed bytes are the sent bytes, literally:
    type back, collision-free within a second.
 
 `Prepared` is a constructor-backed type exposing a reader, digest and size;
-`Send` accepts nothing else. Gmail encodes it as `raw`; Graph posts it as
+`Send` transmits nothing else. Gmail encodes it as `raw`; Graph posts it as
 MIME.
+
+### Replies
+
+`send-mail --reply ID` (or `--reply-all ID`) answers the message `mail-find`
+returned as `ID`, inside its conversation. A reply that only looks threaded
+is the failure this exists for: a new message under a `Re:` subject is
+grouped by subject in Apple Mail, while Gmail files it as a thread of its
+own and a helpdesk cannot attach it to its ticket.
+
+Everything a reply derives comes from `mail.NewReply`, used by compose and
+by the contract suite alike:
+
+- **Recipients:** the original's Reply-To, else its sender; a message the
+  account sent itself is answered to its own recipients. Reply-all adds
+  everyone else on it, never the account. Reply-to-sender is the default
+  because an extra recipient cannot be unsent, while a missing one shows in
+  the preview and `--cc` adds it.
+- **Subject:** the original's with `Re: ` once. Gmail threads only on a
+  matching subject, so `--to` and `--subject` are refused with a reply.
+- **Headers:** `In-Reply-To` names the original; `References` continues
+  its chain (RFC 5322 §3.6.4).
+- **Thread:** the provider's placement (`mail.Parent`) lives on the draft
+  record and the `Send` call, never in the `.eml`, so a commit sends into
+  the conversation that was previewed. The commit reports the conversation
+  the provider says it used, and names `mail-find thread` when that differs
+  or the provider does not say.
+
+How each provider places it:
+
+- **Gmail** files a sent message in a thread only when the request carries
+  the `threadId`, the message's `In-Reply-To`/`References` name a message
+  in that thread, and the subjects match; otherwise it silently starts a
+  new thread. The send response names the thread it used.
+- **Graph** threads by Thread-Index, not by the RFC headers, so `sendMail`
+  with them starts a conversation of its own, and `createReply` needs
+  `Mail.ReadWrite`, which the app does not request. Replies go through `/messages/{id}/reply` or `/replyAll`, which take the
+  MIME bytes under `Mail.Send` but address the reply themselves — the
+  original's sender, or everyone on it — and the reference does not say
+  whether the MIME To/Cc count too. `replyAction` sends only when every
+  reading reaches exactly the previewed recipients and refuses the rest
+  with `ErrNotSent`; on Outlook that refuses an extra `--cc`, any `--bcc`,
+  an original with a separate Reply-To, and a reply to one's own message
+  until first contact settles the question (`docs/outlook-status.md`).
+
+Quoting the original body is out of scope: a reply carries what the author
+writes.
 
 ## 6. Tests
 
@@ -206,6 +265,9 @@ Tiers, each with one job:
 | processing default, `--raw` | T2 | `read --raw` == converted text; `thread --raw` contains every body; `context --raw` ≥ default; `--raw` after the subcommand on all three |
 | recovery command | T2 | `attachments` on remote-only message names `read <id> --fetch-remote`; absent otherwise; `ErrAuth` names the login command |
 | send gate | T2 | bytes the fake `Send` receives parse back with every recipient incl. Bcc and every attachment hash; edited `.eml` refused; second commit refused; concurrent commits → one send; crash between `sending` and `sent` → `unknown` |
+| reply derivation | T3 | recipients (sender, Reply-To, own message, reply-all minus the account, each once); `Re:` once; `References` continues the recorded tenancy chain |
+| reply in the gate | T2 | `--reply` → commit: the parent reaches `Send`, the bytes carry the threading headers, `thread` shows the reply as a turn; a record whose original disagrees with the bytes is refused; `--to`/`--subject` refused; the commit names a conversation the provider moved it to |
+| reply threading | T1 contract | on memory, Gmail and Graph, a send with a parent joins the parent's conversation; Gmail's cassette files by the threads guide's criteria, Graph's by the reply action's documented recipients |
 | markdown compose | T3 + T2 | both renderings of one AST carry the same tokens; raw HTML / images / non-mail links / renders-to-nothing refused naming the escape; sent tree asserted with parentage (alternative under mixed, plain before HTML); `--format text` bytes survive untouched |
 | contract | T2 | each of the seven subcommands + send-mail has one happy-path case |
 
@@ -230,4 +292,5 @@ forward `1989fc5ed9469c6c`, IKEA run incl. `1a02367a18eae254`, remote-only
 
 Go does not unblock Outlook; Graph stays doc-derived until the admin
 clicks. `LinkedPart` is surfaced, not followed. `uniqueBody` agreement has
-no fixture until a recording exists.
+no fixture until a recording exists. Outlook refuses the replies whose
+recipients its reply actions might choose differently (§5, Replies).

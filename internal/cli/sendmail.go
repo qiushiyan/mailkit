@@ -23,6 +23,7 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 	var (
 		commit, bodyFile, body, subject, sender string
 		to, cc, bcc, format                     string
+		reply, replyAll                         string
 		attach                                  []string
 		list, noOpen                            bool
 	)
@@ -34,8 +35,14 @@ func SendMail(d Deps, out, errOut io.Writer, stdin io.Reader) *cobra.Command {
 Three ways to run it:
   send-mail --to A --subject S --body B [--attach F]...   compose: builds the exact
                                                           message, writes a preview, sends nothing
+  send-mail --reply ID --body B [--cc C]...               compose a reply to message ID (the
+                                                          "id" mail-find gives), in its thread
   send-mail --commit DRAFT-ID                             send that draft, once
-  send-mail --list                                        recent drafts and their state`,
+  send-mail --list                                        recent drafts and their state
+
+A reply goes to the original's sender (its Reply-To when it names one);
+--reply-all ID adds everyone else on it. Its recipients and "Re:" subject
+come from the original, so --to and --subject are refused with it.`,
 		SilenceUsage:      true,
 		SilenceErrors:     true,
 		Args:              cobra.NoArgs,
@@ -112,21 +119,48 @@ Three ways to run it:
 					_ = a.Drafts.Release(rec, err)
 					return err
 				}
-				id, sendErr := box.Send(ctx, prepared)
-				if err := a.Drafts.Finish(rec, id, acct.Address, sendErr, a.Now()); err != nil {
+				parent := rec.Parent()
+				sent, sendErr := box.Send(ctx, prepared, parent)
+				if err := a.Drafts.Finish(rec, sent.ID, acct.Address, sendErr, a.Now()); err != nil {
 					return err
 				}
 				if sendErr != nil {
 					return sendErr
 				}
 				a.printf("sent as %s -> %s\nsubject: %s\n", acct.Address, strings.Join(rec.To, ", "), rec.Subject)
+				if parent != nil {
+					// Report the thread only as far as the provider said where
+					// the message went; a mismatch is the failure replies exist
+					// to prevent, so it is named, with the command that shows it.
+					check := fmt.Sprintf("mail-find thread %s --account %s", parent.ID, rec.Account)
+					switch sent.ConversationID {
+					case parent.ConversationID:
+						a.printf("in reply to %s, in its thread %s\n", rec.InReplyTo.From, parent.ConversationID)
+					case "":
+						a.printf("in reply to %s; %s does not report the thread it used. To check:\n    %s\n", rec.InReplyTo.From, rec.Account, check)
+					default:
+						a.printf("warning: %s put the reply in conversation %s, not the original's %s. To see the original's thread:\n    %s\n", rec.Account, sent.ConversationID, parent.ConversationID, check)
+					}
+				}
 				return nil
 
 			default:
-				if to == "" && subject == "" && body == "" && bodyFile == "" {
-					return errors.New("nothing to do: compose with --to/--subject/--body, send a draft with --commit DRAFT-ID, or --list")
+				if reply != "" && replyAll != "" {
+					return errors.New("--reply and --reply-all answer one message two ways; use one")
 				}
-				if subject == "" {
+				parentID, all := reply, false
+				if replyAll != "" {
+					parentID, all = replyAll, true
+				}
+				if to == "" && subject == "" && body == "" && bodyFile == "" && parentID == "" {
+					return errors.New("nothing to do: compose with --to/--subject/--body, reply with --reply ID, send a draft with --commit DRAFT-ID, or --list")
+				}
+				switch {
+				case parentID != "" && cmd.Flags().Changed("to"):
+					return errors.New("a reply goes to the original's sender (--reply-all: everyone on it); drop --to, and add other people with --cc")
+				case parentID != "" && cmd.Flags().Changed("subject"):
+					return errors.New(`a reply's subject is the original's with "Re:" -- Gmail threads a reply only when the subjects match; drop --subject`)
+				case parentID == "" && subject == "":
 					return errors.New("--subject is required")
 				}
 				if format != "text" && format != "html" && format != "markdown" {
@@ -151,6 +185,18 @@ Three ways to run it:
 				if sender != "" {
 					from = sender
 				}
+				var answer *mail.Reply
+				if parentID != "" {
+					orig, err := box.Fetch(ctx, parentID)
+					if err != nil {
+						return err
+					}
+					r, err := mail.NewReply(orig.Envelope, []string{acct.Address, sender}, all)
+					if err != nil {
+						return err
+					}
+					answer = &r
+				}
 				var spec drafts.Body
 				switch format {
 				case "html":
@@ -162,7 +208,7 @@ Three ways to run it:
 				}
 				rec, prepared, err := a.Drafts.Create(drafts.Compose{
 					Account: a.account, From: from, To: split(to), Cc: split(cc), Bcc: split(bcc),
-					Subject: subject, Body: spec, Attach: attach,
+					Subject: subject, Body: spec, Attach: attach, Reply: answer,
 				}, a.Now())
 				if err != nil {
 					return err
@@ -178,7 +224,15 @@ Three ways to run it:
 				if !noOpen && a.OpenPreview != nil {
 					_ = a.OpenPreview(page)
 				}
-				a.printf("draft   %s\naccount %s (%s)\npreview %s\nsize    %s\n", rec.ID, rec.Account, rec.From, page, drafts.HumanSize(rec.Size))
+				a.printf("draft   %s\naccount %s (%s)\n", rec.ID, rec.Account, rec.From)
+				if o := rec.InReplyTo; o != nil {
+					// The recipients were chosen here, not typed: say who they are.
+					a.printf("answers %s, %q, %s\nto      %s\n", o.From, o.Subject, o.Date, strings.Join(rec.To, ", "))
+					if len(rec.Cc) > 0 {
+						a.printf("cc      %s\n", strings.Join(rec.Cc, ", "))
+					}
+				}
+				a.printf("preview %s\nsize    %s\n", page, drafts.HumanSize(rec.Size))
 				if rec.Size > acct.SendLimit {
 					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", drafts.HumanSize(rec.Size), drafts.HumanSize(acct.SendLimit), a.account)
 				}
@@ -196,7 +250,9 @@ Three ways to run it:
 	f.StringVarP(&to, "to", "t", "", "comma-separated recipients")
 	f.StringVar(&cc, "cc", "", "comma-separated copy recipients")
 	f.StringVar(&bcc, "bcc", "", "comma-separated blind copies, hidden from the other recipients")
-	f.StringVarP(&subject, "subject", "s", "", "subject line (required)")
+	f.StringVarP(&subject, "subject", "s", "", "subject line (required, except for a reply)")
+	f.StringVar(&reply, "reply", "", "compose a reply to message ID, in its thread, to its sender")
+	f.StringVar(&replyAll, "reply-all", "", "compose a reply to message ID, in its thread, to everyone on it except you")
 	f.StringVar(&body, "body", "", "body text inline")
 	f.StringVar(&bodyFile, "body-file", "", "read body from a file, or - for stdin")
 	f.StringArrayVar(&attach, "attach", nil, "attach a file (repeatable)")

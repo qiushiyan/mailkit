@@ -1,17 +1,22 @@
 package graph_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	netmail "net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,6 +36,7 @@ type cassette struct {
 	item     map[string]any
 	requests []*http.Request
 	sendBody string
+	sends    int
 	// pageSize, when set, overrides $top so paging is exercised on a small fixture.
 	pageSize int
 }
@@ -209,7 +215,25 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":{"code":"BadRequest","message":"MIME send needs text/plain"}}`, 400)
 			return
 		}
+		c.file(b, nil, "")
 		w.WriteHeader(http.StatusAccepted)
+	case r.Method == http.MethodPost && (strings.HasSuffix(path, "/reply") || strings.HasSuffix(path, "/replyAll")):
+		rest, action, _ := strings.Cut(strings.TrimPrefix(path, "/me/messages/"), "/")
+		id, _ := url.PathUnescape(rest)
+		b, _ := io.ReadAll(r.Body)
+		c.sendBody = string(b)
+		if r.Header.Get("Content-Type") != "text/plain" {
+			http.Error(w, `{"error":{"code":"BadRequest","message":"MIME reply needs text/plain"}}`, 400)
+			return
+		}
+		for _, m := range c.messages {
+			if str(m, "id") == id {
+				c.file(b, m, action)
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+		}
+		http.Error(w, `{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}`, 404)
 	case strings.HasSuffix(path, "/$value"):
 		known := false
 		for _, m := range c.messages {
@@ -263,6 +287,72 @@ func (c *cassette) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unexpected "+r.URL.String(), 500)
 	}
+}
+
+const me = "qiushi@planlab.example"
+
+// file models where Graph puts a message it sends. sendMail starts a
+// conversation of its own -- Exchange groups by Thread-Index, never by
+// In-Reply-To/References -- addressed as the MIME says. A reply action puts
+// the reply in the original's conversation and addresses it as the
+// reference says, ignoring the MIME To and Cc: /reply to the original's
+// sender, /replyAll to the sender and everyone on it but the account. That
+// is the narrowest reading of the reference, so an adapter that reaches the
+// previewed recipients here reaches them under every reading. Single-part
+// bodies only; anything else is a loud failure.
+func (c *cassette) file(b64 []byte, orig map[string]any, action string) {
+	raw, err := base64.StdEncoding.DecodeString(string(b64))
+	if err != nil {
+		c.t.Errorf("MIME body is not base64: %v", err)
+		return
+	}
+	m, err := netmail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		c.t.Errorf("MIME body is not RFC 5322: %v", err)
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(m.Header.Get("Content-Type")), "multipart/") {
+		c.t.Errorf("cassette files single-part sends only -- extend it deliberately")
+	}
+	body, _ := io.ReadAll(m.Body)
+	subject, _ := new(mime.WordDecoder).DecodeHeader(m.Header.Get("Subject"))
+	recips := func(as []mail.Address) []any {
+		out := []any{}
+		for _, a := range as {
+			if !strings.EqualFold(a.Email, me) {
+				out = append(out, map[string]any{"emailAddress": map[string]any{"name": a.Name, "address": a.Email}})
+			}
+		}
+		return out
+	}
+	listed := func(v any) []any {
+		l, _ := v.([]any)
+		return l
+	}
+	c.sends++
+	id := fmt.Sprintf("sent-%d", c.sends)
+	conv, to, cc := "AAQk-"+id, recips(mail.ParseAddressList(m.Header.Get("To"))), recips(mail.ParseAddressList(m.Header.Get("Cc")))
+	if orig != nil {
+		conv, to, cc = str(orig, "conversationId"), []any{orig["from"]}, []any{}
+		if action == "replyAll" {
+			to = append(to, listed(orig["toRecipients"])...)
+			cc = listed(orig["ccRecipients"])
+		}
+		mine := func(r any) bool {
+			ea, _ := r.(map[string]any)["emailAddress"].(map[string]any)
+			return strings.EqualFold(str(ea, "address"), me)
+		}
+		to, cc = slices.DeleteFunc(slices.Clone(to), mine), slices.DeleteFunc(slices.Clone(cc), mine)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	c.messages = append(c.messages, map[string]any{
+		"@odata.type": "#microsoft.graph.message", "id": id, "internetMessageId": m.Header.Get("Message-ID"),
+		"conversationId": conv, "receivedDateTime": now, "sentDateTime": now, "subject": subject,
+		"bodyPreview": "", "hasAttachments": false, "attachments": []any{},
+		"from":         map[string]any{"emailAddress": map[string]any{"name": "Qiushi", "address": me}},
+		"toRecipients": to, "ccRecipients": cc,
+		"body": map[string]any{"contentType": "text", "content": string(body)},
+	})
 }
 
 func TestGraph_Contract(t *testing.T) {
@@ -362,12 +452,12 @@ func TestGraph_SendPostsPreparedBytesAsMIME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := box.Send(t.Context(), p)
+	sent, err := box.Send(t.Context(), p, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "" {
-		t.Errorf("MIME sendMail returns 202 and no id; inventing one misleads recovery, got %q", id)
+	if sent != (mail.Sent{}) {
+		t.Errorf("MIME sendMail returns 202 and nothing else; inventing an id or a conversation misleads recovery, got %+v", sent)
 	}
 	raw, err := base64.StdEncoding.DecodeString(c.sendBody)
 	if err != nil || string(raw) != string(p.Bytes()) {
@@ -479,5 +569,180 @@ func TestGraph_NestedEmbeddedMessageIsExpandedOrMarkedTruncated(t *testing.T) {
 				t.Fatalf("a nested embedded message that was not fetched must say so: %+v", inner)
 			}
 		}
+	}
+}
+
+// --- replies: Graph's reply actions address a reply themselves ------------
+
+// reply builds the prepared bytes a reply draft would carry, addressed as
+// given, and the parent it is sent under.
+func reply(t *testing.T, box *graph.Mailbox, id string, to, cc, bcc string) (*mail.Prepared, *mail.Parent) {
+	t.Helper()
+	orig, err := box.Fetch(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mail.NewReply(orig.Envelope, []string{me}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr := "From: " + me + "\r\nTo: " + to + "\r\n"
+	if cc != "" {
+		hdr += "Cc: " + cc + "\r\n"
+	}
+	if bcc != "" {
+		hdr += "Bcc: " + bcc + "\r\n"
+	}
+	p, err := mail.NewPrepared(strings.NewReader(hdr + "Subject: " + r.Subject + "\r\nIn-Reply-To: " + r.InReplyTo +
+		"\r\nReferences: " + r.References + "\r\nMessage-ID: <r@mailkit>\r\n\r\nYes, the printers move too.\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := r.Parent()
+	return p, &parent
+}
+
+func posts(c *cassette) []string {
+	var out []string
+	for _, r := range c.requests {
+		if r.Method == http.MethodPost {
+			out = append(out, r.URL.Path)
+		}
+	}
+	return out
+}
+
+func recipients(m map[string]any, key string) []string {
+	var out []string
+	for _, r := range m[key].([]any) {
+		ea := r.(map[string]any)["emailAddress"].(map[string]any)
+		out = append(out, str(ea, "address"))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// sendMail would start a conversation of its own, so a reply goes through
+// the original's reply action -- the prepared bytes, as MIME -- and reaches
+// exactly the recipients it was previewed with.
+func TestGraph_ReplyGoesThroughTheReplyAction(t *testing.T) {
+	c, box := newCassette(t)
+	p, parent := reply(t, box, "AAMkAGI1-first", "dana@contoso.example", "", "")
+	if _, err := box.Send(t.Context(), p, parent); err != nil {
+		t.Fatal(err)
+	}
+	if got := posts(c); len(got) != 1 || got[0] != "/me/messages/AAMkAGI1-first/reply" {
+		t.Fatalf("POSTs = %v, want the original's reply action alone", got)
+	}
+	raw, err := base64.StdEncoding.DecodeString(c.sendBody)
+	if err != nil || !bytes.Equal(raw, p.Bytes()) {
+		t.Errorf("reply body does not decode to the prepared bytes: %v", err)
+	}
+	filed := c.messages[len(c.messages)-1]
+	if str(filed, "conversationId") != "AAQkAGI1-conv" || !slices.Equal(recipients(filed, "toRecipients"), []string{"dana@contoso.example"}) {
+		t.Errorf("reply filed in %s to %v", str(filed, "conversationId"), recipients(filed, "toRecipients"))
+	}
+}
+
+func TestGraph_ReplyAllUsesReplyAll(t *testing.T) {
+	c, box := newCassette(t)
+	first := c.messages[0]
+	first["toRecipients"] = append(first["toRecipients"].([]any), map[string]any{"emailAddress": map[string]any{"name": "Lee", "address": "lee@contoso.example"}})
+	first["ccRecipients"] = []any{map[string]any{"emailAddress": map[string]any{"name": "Facilities", "address": "facilities@contoso.example"}}}
+	p, parent := reply(t, box, "AAMkAGI1-first", "dana@contoso.example, lee@contoso.example", "facilities@contoso.example", "")
+	if _, err := box.Send(t.Context(), p, parent); err != nil {
+		t.Fatal(err)
+	}
+	if got := posts(c); len(got) != 1 || got[0] != "/me/messages/AAMkAGI1-first/replyAll" {
+		t.Fatalf("POSTs = %v, want replyAll", got)
+	}
+	filed := c.messages[len(c.messages)-1]
+	got := append(recipients(filed, "toRecipients"), recipients(filed, "ccRecipients")...)
+	slices.Sort(got)
+	if want := []string{"dana@contoso.example", "facilities@contoso.example", "lee@contoso.example"}; !slices.Equal(got, want) {
+		t.Errorf("reply-all reached %v, want %v", got, want)
+	}
+}
+
+// Whatever Graph would address differently from the preview, under any
+// reading of its reference, is refused before a byte leaves -- and refused
+// as not sent, so the draft returns to pending rather than unknown.
+func TestGraph_ReplyGraphCannotAddressAsPreviewedIsRefusedBeforeSending(t *testing.T) {
+	for name, tc := range map[string]struct {
+		id, to, cc, bcc string
+		setup           func(c *cassette)
+	}{
+		"an extra cc":           {id: "AAMkAGI1-first", to: "dana@contoso.example", cc: "boss@contoso.example"},
+		"a bcc":                 {id: "AAMkAGI1-first", to: "dana@contoso.example", bcc: "me@planlab.example"},
+		"my own message":        {id: "AAMkAGI1-second", to: "dana@contoso.example"},
+		"a Reply-To, addressed": {id: "AAMkAGI1-first", to: "moves@contoso.example", setup: withReplyTo},
+		"a Reply-To, ignored":   {id: "AAMkAGI1-first", to: "dana@contoso.example", setup: withReplyTo},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, box := newCassette(t)
+			if tc.setup != nil {
+				tc.setup(c)
+			}
+			p, parent := reply(t, box, tc.id, tc.to, tc.cc, tc.bcc)
+			_, err := box.Send(t.Context(), p, parent)
+			if !errors.Is(err, mail.ErrNotSent) {
+				t.Fatalf("want a refusal marked not sent, got %v", err)
+			}
+			if got := posts(c); len(got) != 0 {
+				t.Errorf("a refused reply still POSTed %v", got)
+			}
+		})
+	}
+}
+
+// A note to self is answered to self under every reading, so it goes.
+func TestGraph_ReplyToANoteToSelfIsSent(t *testing.T) {
+	c, box := newCassette(t)
+	note := maps.Clone(c.messages[2])
+	note["id"], note["conversationId"] = "AAMkAGI1-note", "AAQkAGI1-note"
+	note["from"] = map[string]any{"emailAddress": map[string]any{"name": "Qiushi", "address": me}}
+	note["toRecipients"] = []any{note["from"]}
+	c.messages = append(c.messages, note)
+	p, parent := reply(t, box, "AAMkAGI1-note", me, "", "")
+	if _, err := box.Send(t.Context(), p, parent); err != nil {
+		t.Fatal(err)
+	}
+	if got := posts(c); len(got) != 1 || got[0] != "/me/messages/AAMkAGI1-note/reply" {
+		t.Errorf("POSTs = %v", got)
+	}
+}
+
+// One reading of the reference sends a reply to the Reply-To, the other to
+// the sender; with both on the original, no recipient set is safe.
+func withReplyTo(c *cassette) {
+	c.messages[0]["replyTo"] = []any{map[string]any{"emailAddress": map[string]any{"name": "Moves", "address": "moves@contoso.example"}}}
+}
+
+// A reply continues the chain its original carries, so a fetched message
+// brings its transport headers and its Reply-To.
+func TestGraph_FetchCarriesTheThreadingHeaders(t *testing.T) {
+	c, box := newCassette(t)
+	withReplyTo(c)
+	c.messages[1]["internetMessageHeaders"] = []any{
+		map[string]any{"name": "In-Reply-To", "value": "<first.0001@contoso.example>"},
+		map[string]any{"name": "References", "value": "<first.0001@contoso.example>"},
+	}
+	second, err := box.Fetch(t.Context(), "AAMkAGI1-second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(second.InReplyTo, []mail.MessageID{"first.0001@contoso.example"}) || !slices.Equal(second.References, second.InReplyTo) {
+		t.Errorf("threading headers: in-reply-to %v references %v", second.InReplyTo, second.References)
+	}
+	last := c.requests[len(c.requests)-1].URL.Query().Get("$select")
+	if !strings.Contains(last, "internetMessageHeaders") {
+		t.Errorf("fetch must select the transport headers: %s", last)
+	}
+	first, err := box.Fetch(t.Context(), "AAMkAGI1-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.ReplyTo) != 1 || first.ReplyTo[0].Email != "moves@contoso.example" {
+		t.Errorf("ReplyTo = %v", first.ReplyTo)
 	}
 }

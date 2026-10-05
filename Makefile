@@ -15,11 +15,13 @@ install:
 	done
 
 # The in-repo skills, made global: symlinked into the stow-managed dotfiles
-# skills dir, which ~/.claude/skills already points at.
+# skills dir, which ~/.claude/skills already points at. The link is tracked
+# there and read on two machines, so it is relative to that directory: an
+# absolute path would resolve under one home only.
 skills:
 	@for s in skills/*/; do \
 		name=$$(basename $$s); \
-		ln -sfn $(CURDIR)/skills/$$name $(HOME)/dotfiles/claude/.claude/skills/$$name && echo "linked $$name"; \
+		ln -sfn ../../../../$(patsubst $(HOME)/%,%,$(CURDIR))/skills/$$name $(HOME)/dotfiles/claude/.claude/skills/$$name && echo "linked $$name"; \
 	done
 
 test:

@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
-	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
 // SendMail builds the compose/commit command. Composing is always a dry
@@ -92,42 +91,12 @@ come from the original, so --to and --subject are refused with it.`,
 				return nil
 
 			case commit != "":
-				rec, err := a.Drafts.Claim(commit)
+				rec, err := a.Drafts.Commit(ctx, commit, a.Open, a.Now())
 				if err != nil {
 					return err
 				}
-				// Everything up to Send is local or read-only: a failure
-				// here releases the claim, because nothing left the machine.
-				prepared, err := a.Drafts.Open(rec)
-				if err != nil {
-					_ = a.Drafts.Release(rec, err)
-					return err
-				}
-				box, err := a.Open(ctx, rec.Account)
-				if err != nil {
-					_ = a.Drafts.Release(rec, err)
-					return a.authHint(err)
-				}
-				acct, err := box.Account(ctx)
-				if err != nil {
-					_ = a.Drafts.Release(rec, err)
-					return a.authHint(err)
-				}
-				if prepared.Size() > acct.SendLimit {
-					err := fmt.Errorf("message is %s, over the %s limit for %s; send a share link instead",
-						drafts.HumanSize(prepared.Size()), drafts.HumanSize(acct.SendLimit), rec.Account)
-					_ = a.Drafts.Release(rec, err)
-					return err
-				}
-				parent := rec.Parent()
-				sent, sendErr := box.Send(ctx, prepared, parent)
-				if err := a.Drafts.Finish(rec, sent.ID, acct.Address, sendErr, a.Now()); err != nil {
-					return err
-				}
-				if sendErr != nil {
-					return sendErr
-				}
-				a.printf("sent as %s -> %s\nsubject: %s\n", acct.Address, strings.Join(rec.To, ", "), rec.Subject)
+				parent, sent := rec.Parent(), rec.Sent
+				a.printf("sent as %s -> %s\nsubject: %s\n", rec.SentAs, strings.Join(rec.To, ", "), rec.Subject)
 				if parent != nil {
 					// Report the thread only as far as the provider said where
 					// the message went; a mismatch is the failure replies exist
@@ -173,30 +142,6 @@ come from the original, so --to and --subject are refused with it.`,
 				if err != nil {
 					return err
 				}
-				box, err := a.Open(ctx, a.account)
-				if err != nil {
-					return a.authHint(err)
-				}
-				acct, err := box.Account(ctx)
-				if err != nil {
-					return a.authHint(err)
-				}
-				from := acct.Address
-				if sender != "" {
-					from = sender
-				}
-				var answer *mail.Reply
-				if parentID != "" {
-					orig, err := box.Fetch(ctx, parentID)
-					if err != nil {
-						return err
-					}
-					r, err := mail.NewReply(orig.Envelope, []string{acct.Address, sender}, all)
-					if err != nil {
-						return err
-					}
-					answer = &r
-				}
 				var spec drafts.Body
 				switch format {
 				case "html":
@@ -206,23 +151,15 @@ come from the original, so --to and --subject are refused with it.`,
 				default:
 					spec = drafts.PlainBody(text)
 				}
-				rec, prepared, err := a.Drafts.Create(drafts.Compose{
-					Account: a.account, From: from, To: split(to), Cc: split(cc), Bcc: split(bcc),
-					Subject: subject, Body: spec, Attach: attach, Reply: answer,
+				rec, err := a.Drafts.Draft(ctx, a.Open, drafts.Request{
+					Account: a.account, Sender: sender, To: split(to), Cc: split(cc), Bcc: split(bcc),
+					Subject: subject, Body: spec, Attach: attach, Reply: parentID, ReplyAll: all,
 				}, a.Now())
 				if err != nil {
 					return err
 				}
-				parsed, err := drafts.Parse(prepared)
-				if err != nil {
-					return err
-				}
-				page := a.Drafts.PreviewPath(rec.ID)
-				if err := os.WriteFile(page, []byte(drafts.RenderPreview(rec, parsed)), 0o600); err != nil {
-					return err
-				}
 				if !noOpen && a.OpenPreview != nil {
-					_ = a.OpenPreview(page)
+					_ = a.OpenPreview(rec.Preview)
 				}
 				a.printf("draft   %s\naccount %s (%s)\n", rec.ID, rec.Account, rec.From)
 				if o := rec.InReplyTo; o != nil {
@@ -232,9 +169,9 @@ come from the original, so --to and --subject are refused with it.`,
 						a.printf("cc      %s\n", strings.Join(rec.Cc, ", "))
 					}
 				}
-				a.printf("preview %s\nsize    %s\n", page, drafts.HumanSize(rec.Size))
-				if rec.Size > acct.SendLimit {
-					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", drafts.HumanSize(rec.Size), drafts.HumanSize(acct.SendLimit), a.account)
+				a.printf("preview %s\nsize    %s\n", rec.Preview, drafts.HumanSize(rec.Size))
+				if rec.Size > rec.SendLimit {
+					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", drafts.HumanSize(rec.Size), drafts.HumanSize(rec.SendLimit), a.account)
 				}
 				a.printf("\nnothing has been sent. to send exactly this draft:\n    send-mail --commit %s\n", rec.ID)
 				return nil
@@ -291,10 +228,4 @@ func readBody(file, inline string, stdin io.Reader) (string, error) {
 		return inline, nil
 	}
 	return "", errors.New("give a body with --body or --body-file (use - for stdin)")
-}
-
-// authHint attaches the login command to a not-authenticated error that
-// reached the CLI without one; an adapter's own hint passes through.
-func (a *app) authHint(err error) error {
-	return mail.Wrap(a.account, "account", mail.LoginCommand(a.account), err)
 }

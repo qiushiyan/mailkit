@@ -10,10 +10,15 @@
 // can never leave a sent message looking pending. A reply's thread is part
 // of what was reviewed too: the record keeps the original it answers, and
 // a commit sends into exactly that conversation.
+//
+// Draft and Commit are the two acts, and each runs its whole sequence
+// itself: a caller cannot write a draft without its preview, or send one
+// without the claim, the checks and the outcome recorded in their order.
 package drafts
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -103,7 +108,72 @@ type Attachment struct {
 	Size int64  `json:"size"`
 }
 
-// Compose is what the user asked to send.
+// Request is a draft as its author asked for it. The address it goes out
+// as, and for a reply its recipients and subject, come from the mailbox.
+type Request struct {
+	Account string
+	// Sender is a send-as address; empty means the account's own.
+	Sender      string
+	To, Cc, Bcc []string
+	Subject     string
+	Body        Body
+	Attach      []string
+	// Reply is the id of the message this answers, empty for a new
+	// conversation; ReplyAll addresses everyone on it but the account.
+	Reply    string
+	ReplyAll bool
+}
+
+// Draft is a written draft and what its author is shown about it.
+type Draft struct {
+	Record
+	// Preview is the page rendered from the draft's bytes.
+	Preview string
+	// SendLimit is the account's ceiling; Size may already be over it.
+	SendLimit int64
+}
+
+// Draft builds the message a request describes, from the account it names,
+// and writes it with its preview. Nothing is sent.
+func (s Store) Draft(ctx context.Context, open mail.Opener, r Request, now time.Time) (Draft, error) {
+	box, err := open(ctx, r.Account)
+	if err != nil {
+		return Draft{}, loginHint(r.Account, err)
+	}
+	acct, err := box.Account(ctx)
+	if err != nil {
+		return Draft{}, loginHint(r.Account, err)
+	}
+	c := Compose{Account: r.Account, From: acct.Address, To: r.To, Cc: r.Cc, Bcc: r.Bcc,
+		Subject: r.Subject, Body: r.Body, Attach: r.Attach}
+	if r.Sender != "" {
+		c.From = r.Sender
+	}
+	if r.Reply != "" {
+		orig, err := box.Fetch(ctx, r.Reply)
+		if err != nil {
+			return Draft{}, err
+		}
+		reply, err := mail.NewReply(orig.Envelope, []string{acct.Address, r.Sender}, r.ReplyAll)
+		if err != nil {
+			return Draft{}, err
+		}
+		c.Reply = &reply
+	}
+	rec, _, err := s.Create(c, now)
+	if err != nil {
+		return Draft{}, err
+	}
+	return Draft{Record: rec, Preview: s.PreviewPath(rec.ID), SendLimit: acct.SendLimit}, nil
+}
+
+// loginHint attaches the login command to a not-authenticated error that
+// reached the gate without one; an adapter's own hint passes through.
+func loginHint(account string, err error) error {
+	return mail.Wrap(account, "account", mail.LoginCommand(account), err)
+}
+
+// Compose is a draft with its sender resolved: what Create writes.
 type Compose struct {
 	Account     string
 	From        string // the authenticated address, or a send-as override
@@ -149,7 +219,8 @@ type Store struct{ Dir string }
 
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-// Create builds the wire message and writes the draft. Nothing is sent.
+// Create builds the wire message and writes the draft: the .eml, its
+// record, and the preview rendered from the .eml. Nothing is sent.
 func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) {
 	if r := c.Reply; r != nil {
 		// A reply is addressed and titled by what it answers. A second
@@ -267,6 +338,13 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 	if err := s.write(rec); err != nil {
 		return Record{}, nil, err
 	}
+	parsed, err := parse(prepared)
+	if err != nil {
+		return Record{}, nil, err
+	}
+	if err := os.WriteFile(s.PreviewPath(id), []byte(renderPreview(rec, parsed)), 0o600); err != nil {
+		return Record{}, nil, err
+	}
 	return rec, prepared, nil
 }
 
@@ -358,6 +436,54 @@ func (s Store) Open(r Record) (*mail.Prepared, error) {
 	return p, nil
 }
 
+// Receipt is what a commit reports: the draft, the address it went out
+// as, and where the provider says it put it.
+type Receipt struct {
+	Record
+	SentAs string
+	Sent   mail.Sent
+}
+
+// Commit sends a pending draft's bytes, once, into the conversation its
+// record names. Everything before Send is local or read-only, so a failure
+// there returns the draft to pending; a failure after it may have left
+// leaves the outcome unknown.
+func (s Store) Commit(ctx context.Context, id string, open mail.Opener, now time.Time) (Receipt, error) {
+	rec, err := s.Claim(id)
+	if err != nil {
+		return Receipt{}, err
+	}
+	refuse := func(err error) (Receipt, error) {
+		_ = s.release(rec, err)
+		return Receipt{}, err
+	}
+	prepared, err := s.Open(rec)
+	if err != nil {
+		return refuse(err)
+	}
+	box, err := open(ctx, rec.Account)
+	if err != nil {
+		return refuse(loginHint(rec.Account, err))
+	}
+	acct, err := box.Account(ctx)
+	if err != nil {
+		return refuse(loginHint(rec.Account, err))
+	}
+	if prepared.Size() > acct.SendLimit {
+		return refuse(fmt.Errorf("message is %s, over the %s limit for %s; send a share link instead",
+			HumanSize(prepared.Size()), HumanSize(acct.SendLimit), rec.Account))
+	}
+	sent, sendErr := box.Send(ctx, prepared, rec.Parent())
+	rec, err = s.finish(rec, sent.ID, acct.Address, sendErr, now)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if sendErr != nil {
+		return Receipt{}, sendErr
+	}
+	return Receipt{Record: rec, SentAs: acct.Address, Sent: sent}, nil
+}
+
 // Claim moves a pending draft to sending. The record's state is the
 // single-use token; the lock only serialises the read-modify-write so two
 // concurrent commits cannot both see "pending". It is a kernel advisory
@@ -398,27 +524,28 @@ func (s Store) Claim(id string) (Record, error) {
 	return r, nil
 }
 
-// Release returns a claimed draft to pending: nothing was transmitted, so
+// release returns a claimed draft to pending: nothing was transmitted, so
 // the draft can be committed again once the reason is fixed.
-func (s Store) Release(r Record, reason error) error {
+func (s Store) release(r Record, reason error) error {
 	r.State, r.Error = Pending, reason.Error()
 	return s.write(r)
 }
 
-// Finish records the outcome of a claimed send. A provider that refused the
-// message before accepting any of it (too large, not authenticated, or
-// refused outright) leaves the draft pending; any other failure is an
-// unknown outcome, because the bytes may have left.
-func (s Store) Finish(r Record, providerID, sentAs string, sendErr error, now time.Time) error {
+// finish records the outcome of a claimed send and returns the record as
+// written. A provider that refused the message before accepting any of it
+// (too large, not authenticated, or refused outright) leaves the draft
+// pending; any other failure is an unknown outcome, because the bytes may
+// have left.
+func (s Store) finish(r Record, providerID, sentAs string, sendErr error, now time.Time) (Record, error) {
 	switch {
 	case sendErr == nil:
 		r.State, r.SentAt, r.SentAs, r.ProviderID = Sent, now, sentAs, providerID
 	case errors.Is(sendErr, mail.ErrTooLarge) || errors.Is(sendErr, mail.ErrAuth) || errors.Is(sendErr, mail.ErrNotSent):
-		return s.Release(r, sendErr)
+		r.State, r.Error = Pending, sendErr.Error()
 	default:
 		r.State, r.Error = Unknown, sendErr.Error()
 	}
-	return s.write(r)
+	return r, s.write(r)
 }
 
 // Recent lists drafts, newest first.
@@ -445,9 +572,9 @@ func (s Store) Recent(limit int) ([]Record, error) {
 	return out, nil
 }
 
-// Parsed is the prepared message read back for the preview: what will
+// wire is the prepared message read back for the preview: what will
 // actually go out, not what the flags said.
-type Parsed struct {
+type wire struct {
 	From, To, Cc, Bcc, Subject, Date string
 	// InReplyTo is the threading header as the bytes carry it.
 	InReplyTo string
@@ -459,12 +586,12 @@ type Parsed struct {
 	Attachments      []Attachment
 }
 
-// Parse reads the wire message. The preview renders from this so the page
+// parse reads the wire message. The preview renders from this so the page
 // cannot disagree with the bytes.
-func Parse(p *mail.Prepared) (Parsed, error) {
+func parse(p *mail.Prepared) (wire, error) {
 	m, err := netmail.ReadMessage(p.Reader())
 	if err != nil {
-		return Parsed{}, err
+		return wire{}, err
 	}
 	dec := new(mime.WordDecoder)
 	hdr := func(k string) string {
@@ -474,14 +601,14 @@ func Parse(p *mail.Prepared) (Parsed, error) {
 		}
 		return v
 	}
-	out := Parsed{From: hdr("From"), To: hdr("To"), Cc: hdr("Cc"), Bcc: hdr("Bcc"), Subject: hdr("Subject"), Date: hdr("Date"), InReplyTo: m.Header.Get("In-Reply-To")}
+	out := wire{From: hdr("From"), To: hdr("To"), Cc: hdr("Cc"), Bcc: hdr("Bcc"), Subject: hdr("Subject"), Date: hdr("Date"), InReplyTo: m.Header.Get("In-Reply-To")}
 	if err := walk(m.Header.Get("Content-Type"), m.Header.Get("Content-Transfer-Encoding"), m.Body, &out); err != nil {
-		return Parsed{}, err
+		return wire{}, err
 	}
 	return out, nil
 }
 
-func walk(ctype, cte string, body io.Reader, out *Parsed) error {
+func walk(ctype, cte string, body io.Reader, out *wire) error {
 	mt, params, err := mime.ParseMediaType(ctype)
 	if err != nil {
 		mt = "text/plain"

@@ -46,9 +46,9 @@ pre.cmd{background:var(--card);border:1px solid var(--line);border-radius:10px;p
 .foot{color:var(--muted);font-size:13px;margin-top:.75rem}
 `
 
-// RenderPreview is the page a person looks at before committing. It is
+// renderPreview is the page a person looks at before committing. It is
 // rendered from the parsed wire message, so it shows what will be sent.
-func RenderPreview(rec Record, p Parsed) string {
+func renderPreview(rec Record, p wire) string {
 	e := html.EscapeString
 	row := func(label, value string) string {
 		if value == "" {

@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/qiushiyan/mailkit/internal/cli"
-	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/images"
 	"github.com/qiushiyan/mailkit/internal/mail"
-	"github.com/qiushiyan/mailkit/internal/memory"
 	"github.com/qiushiyan/mailkit/internal/pintest"
-	"github.com/qiushiyan/mailkit/internal/render"
 )
 
 // The output callers read, byte for byte. skills/read-email runs these
@@ -59,7 +52,7 @@ func TestContracts(t *testing.T) {
 		{"read-forward", []string{"read", fixtures.AppleForward}},
 		{"read-remote-only", []string{"read", fixtures.RemoteOnly}},
 		{"read-fetch-remote", []string{"read", "pics", "--fetch-remote"}},
-		{"read-fetch-remote-text", []string{"read", "pics", "--fetch-remote", "--text", "--out", w.dir + "/pics"}},
+		{"read-fetch-remote-text", []string{"read", "pics", "--fetch-remote", "--text", "--out", w.root + "/pics"}},
 		{"read-quote-kept", []string{"read", "unverified"}},
 		{"read-quote-kept-text", []string{"read", "unverified", "--text"}},
 		{"read-embedded", []string{"read", "kinds"}},
@@ -87,7 +80,7 @@ func TestContracts(t *testing.T) {
 
 		{"fetch-by-handle", []string{"fetch", fixtures.InlineCID, "--attachment", w.inlineHandle}},
 		{"fetch-all", []string{"fetch", "files", "--all"}},
-		{"fetch-all-out-text", []string{"fetch", "files", "--all", "--out", w.dir + "/out", "--text"}},
+		{"fetch-all-out-text", []string{"fetch", "files", "--all", "--out", w.root + "/out", "--text"}},
 		{"fetch-two-names", []string{"fetch", "files", "--attachment", "../../../etc/passwd", "--attachment", "h2"}},
 		{"fetch-ambiguous", []string{"fetch", "files", "--attachment", "report.pdf"}},
 		{"fetch-unknown-name", []string{"fetch", "files", "--attachment", "nope.pdf"}},
@@ -130,18 +123,15 @@ func TestContracts(t *testing.T) {
 // scenario messages every case reads, under a temporary state directory,
 // with remote images served locally.
 type contractWorld struct {
-	t            *testing.T
-	box          *memory.Mailbox
-	dir          string
+	*harness
 	server       *httptest.Server
-	deps         cli.Deps
 	inlineHandle string
 }
 
 func newContractWorld(t *testing.T) *contractWorld {
 	t.Helper()
 	msg, day, para := fixtures.Msg, fixtures.Day, fixtures.Para
-	w := &contractWorld{t: t, dir: t.TempDir()}
+	w := &contractWorld{}
 	w.server = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		sizes := map[string][2]int{"/wordmark.png": {319, 43}, "/avatar.png": {108, 108}, "/pixel.png": {1, 1}, "/photo.png": {640, 480}}
 		s, ok := sizes[r.URL.Path]
@@ -192,8 +182,7 @@ func newContractWorld(t *testing.T) *contractWorld {
 		"<p>See below.</p><blockquote><p>The landlord agreed to replace the boiler before the fifteenth and will confirm by Friday.</p></blockquote>")
 	msgs = append(msgs, invoice, ref, kinds, files, unverified)
 
-	w.box = memory.New(msgs...)
-	w.box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }
+	w.harness = newHarness(t, msgs...)
 	for _, h := range []string{"inv", "h1", "h2", "h3"} {
 		w.box.Store(mail.Handle(h), []byte(h+"-data"))
 	}
@@ -215,23 +204,7 @@ func newContractWorld(t *testing.T) *contractWorld {
 		}
 		return local.RoundTrip(r)
 	})}
-	w.deps = cli.Deps{
-		Open: func(ctx context.Context, account string) (mail.Mailbox, error) {
-			if account != "gmail" && account != "outlook" {
-				return nil, fmt.Errorf("unknown account %q; pick one of gmail, outlook", account)
-			}
-			return w.box, nil
-		},
-		Login: func(ctx context.Context, account string, out func(string)) error {
-			out("logged in " + account)
-			return nil
-		},
-		Images:        &images.Fetcher{Client: client, Cap: 1 << 20, UserAgent: "test"},
-		Drafts:        drafts.Store{Dir: w.dir + "/drafts"},
-		AttachmentDir: func(id string) string { return w.dir + "/attachments/" + id },
-		Now:           func() time.Time { return time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC) },
-		Accounts:      []string{"gmail", "outlook"},
-	}
+	w.images = &images.Fetcher{Client: client, Cap: 1 << 20, UserAgent: "test"}
 	return w
 }
 
@@ -240,15 +213,12 @@ type roundTrip func(*http.Request) (*http.Response, error)
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func (w *contractWorld) run(args ...string) pintest.Run {
-	var out, errOut bytes.Buffer
-	root := cli.MailFind(w.deps, &out, &errOut)
-	root.SetContext(w.t.Context())
-	code := cli.Run(root, args, &errOut)
-	return pintest.Run{Tool: "mail-find", Args: args, Code: code, Stdout: out.String(), Stderr: errOut.String()}
+	r := w.find(args...)
+	return pintest.Run{Tool: "mail-find", Args: args, Code: r.code, Stdout: r.stdout, Stderr: r.stderr}
 }
 
 // norm replaces what differs between runs: the temporary directory and
 // the local server's port.
 func (w *contractWorld) norm(r pintest.Run) string {
-	return strings.NewReplacer(w.dir, "$TMP", w.server.URL, "$SERVER").Replace(r.String())
+	return strings.NewReplacer(w.root, "$TMP", w.server.URL, "$SERVER").Replace(r.String())
 }

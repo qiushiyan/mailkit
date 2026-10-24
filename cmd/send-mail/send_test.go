@@ -1,4 +1,4 @@
-package cli_test
+package main
 
 import (
 	"bytes"
@@ -80,7 +80,7 @@ func TestSend_CommitSendsExactlyTheReviewedBytes(t *testing.T) {
 	if len(h.box.Sent) != 0 {
 		t.Fatal("compose must not send")
 	}
-	eml, err := os.ReadFile(filepath.Join(h.deps.Drafts.Dir, id+".eml"))
+	eml, err := os.ReadFile(filepath.Join(h.drafts().Dir, id+".eml"))
 	if err != nil {
 		t.Fatalf("draft has no .eml on disk: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestSend_CommitSendsExactlyTheReviewedBytes(t *testing.T) {
 		t.Errorf("a deterministic Message-ID is the recovery handle; none set")
 	}
 	// The preview was rendered from the same bytes.
-	page, _ := os.ReadFile(h.deps.Drafts.PreviewPath(id))
+	page, _ := os.ReadFile(h.drafts().PreviewPath(id))
 	for _, want := range []string{"invoice.pdf", "d@example.com", "Invoice — August"} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("preview does not show %q", want)
@@ -157,7 +157,7 @@ func TestSend_ConcurrentCommitsSendOnce(t *testing.T) {
 func TestSend_EditedDraftIsRefused(t *testing.T) {
 	h := newHarness(t)
 	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "edit", "--body", "original body", "--no-open")))
-	eml := filepath.Join(h.deps.Drafts.Dir, id+".eml")
+	eml := filepath.Join(h.drafts().Dir, id+".eml")
 	b, _ := os.ReadFile(eml)
 	os.WriteFile(eml, bytes.Replace(b, []byte("original"), []byte("tampered"), 1), 0o600)
 	r := mustFail(t, h.send("--commit", id))
@@ -289,7 +289,7 @@ func TestSend_MarkdownIsTheDefaultAndCompilesToAlternative(t *testing.T) {
 			t.Errorf("html part lacks %q:\n%s", want, html)
 		}
 	}
-	page, _ := os.ReadFile(h.deps.Drafts.PreviewPath(id))
+	page, _ := os.ReadFile(h.drafts().PreviewPath(id))
 	for _, want := range []string{"<iframe", "sandbox", "Plain-text part", "Text + HTML"} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("preview lacks %q", want)
@@ -417,20 +417,20 @@ func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testin
 		t.Errorf("a reply goes to the sender alone:\n%s", r.stdout)
 	}
 	id := draftIDOf(t, r)
-	rec, err := h.deps.Drafts.Load(id)
+	rec, err := h.drafts().Load(id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if o := rec.InReplyTo; o == nil || o.ID != "liam" || o.ConversationID != "ticket" || o.MessageID != "CALag-refund@mail.example" {
 		t.Fatalf("the record must keep the original and its thread: %+v", rec.InReplyTo)
 	}
-	page, _ := os.ReadFile(h.deps.Drafts.PreviewPath(id))
+	page, _ := os.ReadFile(h.drafts().PreviewPath(id))
 	for _, want := range []string{"In reply to", "Liam &lt;liam@vendor.example&gt;", "Re: Refund request", answer.DateHeader, "&lt;CALag-refund@mail.example&gt;"} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("preview must show what the draft answers; lacks %q", want)
 		}
 	}
-	eml, _ := os.ReadFile(filepath.Join(h.deps.Drafts.Dir, id+".eml"))
+	eml, _ := os.ReadFile(filepath.Join(h.drafts().Dir, id+".eml"))
 	if bytes.Contains(eml, []byte("ticket")) {
 		t.Error("the provider thread id travels on the send call, never in the message")
 	}
@@ -506,7 +506,7 @@ func TestSend_ReplyWhoseRecordNamesAnotherOriginalIsRefused(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
 	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
-	path := filepath.Join(h.deps.Drafts.Dir, id+".json")
+	path := filepath.Join(h.drafts().Dir, id+".json")
 	b, _ := os.ReadFile(path)
 	os.WriteFile(path, bytes.Replace(b, []byte("CALag-refund@mail.example"), []byte("ask@mail.example"), 1), 0o600)
 	if r := mustFail(t, h.send("--commit", id)); !strings.Contains(r.stderr, "re-draft") {
@@ -515,7 +515,7 @@ func TestSend_ReplyWhoseRecordNamesAnotherOriginalIsRefused(t *testing.T) {
 	if len(h.box.Sent) != 0 {
 		t.Error("a reply whose thread no longer matches its message was sent")
 	}
-	if rec, _ := h.deps.Drafts.Load(id); rec.State != drafts.Pending {
+	if rec, _ := h.drafts().Load(id); rec.State != drafts.Pending {
 		t.Errorf("nothing left, so the draft returns to pending, got %s", rec.State)
 	}
 }
@@ -548,7 +548,7 @@ func TestSend_CommitSaysWhereTheProviderPutTheReply(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ask, answer := ticket()
 			h := newHarness(t, ask, answer)
-			h.deps.Open = func(context.Context, string) (mail.Mailbox, error) { return placing{h.box, tc.conv, nil}, nil }
+			h.open = func(context.Context, string) (mail.Mailbox, error) { return placing{h.box, tc.conv, nil}, nil }
 			id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
 			r := mustOK(t, h.send("--commit", id))
 			for _, want := range tc.want {
@@ -565,12 +565,12 @@ func TestSend_CommitSaysWhereTheProviderPutTheReply(t *testing.T) {
 func TestSend_ReplyRefusedBeforeTransmissionReturnsToPending(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
-	h.deps.Open = func(context.Context, string) (mail.Mailbox, error) {
+	h.open = func(context.Context, string) (mail.Mailbox, error) {
 		return placing{h.box, "", fmt.Errorf("%w: recipients differ", mail.ErrNotSent)}, nil
 	}
 	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
 	mustFail(t, h.send("--commit", id))
-	if rec, _ := h.deps.Drafts.Load(id); rec.State != drafts.Pending {
+	if rec, _ := h.drafts().Load(id); rec.State != drafts.Pending {
 		t.Errorf("a refusal before transmission must leave the draft pending, got %s", rec.State)
 	}
 }

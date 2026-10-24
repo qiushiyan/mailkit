@@ -3,7 +3,7 @@ exit 0
 --- stdout
 draft   20260822-120000-spaced-XXXX
 account gmail (me@example.com)
-preview $TMP/drafts/20260822-120000-spaced-XXXX.html
+preview $TMP/state/drafts/20260822-120000-spaced-XXXX.html
 size    704 B
 
 nothing has been sent. to send exactly this draft:

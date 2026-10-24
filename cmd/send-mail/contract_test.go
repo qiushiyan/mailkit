@@ -2,23 +2,16 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/qiushiyan/mailkit/internal/cli"
-	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/mail"
-	"github.com/qiushiyan/mailkit/internal/memory"
 	"github.com/qiushiyan/mailkit/internal/pintest"
-	"github.com/qiushiyan/mailkit/internal/render"
 )
 
 // The output callers read, byte for byte. skills/write-email runs these
@@ -80,8 +73,8 @@ func TestContracts(t *testing.T) {
 		{name: "bad-address", args: []string{"--to", "not-an-address", "--subject", "x", "--body", "hi", "--no-open"}},
 		{name: "markdown-image", args: []string{"--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--no-open"}},
 		{name: "markdown-raw-html", args: []string{"--to", "a@example.com", "--subject", "log", "--body", "the error was <div>boom</div>", "--no-open"}},
-		{name: "missing-attachment", args: []string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--attach", w.dir + "/nope.pdf", "--no-open"}},
-		{name: "missing-body-file", args: []string{"--to", "a@example.com", "--subject", "x", "--body-file", w.dir + "/nope.md", "--no-open"}},
+		{name: "missing-attachment", args: []string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--attach", w.root + "/nope.pdf", "--no-open"}},
+		{name: "missing-body-file", args: []string{"--to", "a@example.com", "--subject", "x", "--body-file", w.root + "/nope.md", "--no-open"}},
 		{name: "unknown-flag", args: []string{"--bogus"}},
 		{name: "signed-out", setup: func() { w.box.AuthErr = mail.ErrAuth },
 			args: []string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--no-open"}},
@@ -113,12 +106,7 @@ var commitLine = regexp.MustCompile(`send-mail (?:--)?commit (\S+)`)
 // that differs between runs.
 var draftSuffix = regexp.MustCompile(`(\d{8}-\d{6}-[a-z0-9-]*?)-[0-9a-f]{4}\b`)
 
-type contractWorld struct {
-	t    *testing.T
-	box  *memory.Mailbox
-	dir  string
-	deps cli.Deps
-}
+type contractWorld struct{ *harness }
 
 func newContractWorld(t *testing.T) *contractWorld {
 	t.Helper()
@@ -132,25 +120,12 @@ func newContractWorld(t *testing.T) *contractWorld {
 	answer.References = []mail.MessageID{"ask@mail.example"}
 	answer.Cc = []mail.Address{{Email: "billing@vendor.example"}, {Email: "me@example.com"}}
 
-	w := &contractWorld{t: t, dir: t.TempDir()}
-	w.box = memory.New(ask, answer)
-	w.box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }
-	w.deps = cli.Deps{
-		Open: func(ctx context.Context, account string) (mail.Mailbox, error) {
-			if account != "gmail" && account != "outlook" {
-				return nil, fmt.Errorf("unknown account %q; pick one of gmail, outlook", account)
-			}
-			return w.box, nil
-		},
-		Drafts:   drafts.Store{Dir: w.dir + "/drafts"},
-		Now:      func() time.Time { return time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC) },
-		Accounts: []string{"gmail", "outlook"},
-	}
+	w := &contractWorld{newHarness(t, ask, answer)}
 	return w
 }
 
 func (w *contractWorld) file(name string, b []byte) string {
-	p := filepath.Join(w.dir, name)
+	p := filepath.Join(w.root, name)
 	if err := os.WriteFile(p, b, 0o644); err != nil {
 		w.t.Fatal(err)
 	}
@@ -158,16 +133,14 @@ func (w *contractWorld) file(name string, b []byte) string {
 }
 
 func (w *contractWorld) run(stdin string, args ...string) pintest.Run {
-	var out, errOut bytes.Buffer
-	root := cli.SendMail(w.deps, &out, &errOut, strings.NewReader(stdin))
-	root.SetContext(w.t.Context())
-	code := cli.Run(root, args, &errOut)
-	return pintest.Run{Tool: "send-mail", Args: args, Code: code, Stdout: out.String(), Stderr: errOut.String()}
+	w.stdin = stdin
+	r := w.send(args...)
+	return pintest.Run{Tool: "send-mail", Args: args, Code: r.code, Stdout: r.stdout, Stderr: r.stderr}
 }
 
 // norm replaces what differs between runs: the temporary directory and
 // the random suffix of each draft id.
 func (w *contractWorld) norm(r pintest.Run) string {
-	s := strings.ReplaceAll(r.String(), w.dir, "$TMP")
+	s := strings.ReplaceAll(r.String(), w.root, "$TMP")
 	return draftSuffix.ReplaceAllString(s, "${1}-XXXX")
 }

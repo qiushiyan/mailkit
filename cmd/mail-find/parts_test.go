@@ -1,4 +1,4 @@
-package cli_test
+package main
 
 import (
 	"net/http"
@@ -77,7 +77,7 @@ func TestFetch_NamesAreSanitisedAndContainedAndDistinct(t *testing.T) {
 	if len(saved) != 3 {
 		t.Fatalf("saved %d, want 3", len(saved))
 	}
-	dir := h.deps.AttachmentDir("m1")
+	dir := h.dirs.Attachments("m1")
 	seen := map[string]bool{}
 	for _, s := range saved {
 		p := s["path"].(string)
@@ -131,13 +131,13 @@ func TestRead_FetchRemoteLabelsImagesByMinEdgeAndArea(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/wordmark.png":
-			w.Write(pngOf(319, 43))
+			w.Write(fixtures.PNG(319, 43))
 		case "/avatar.png":
-			w.Write(pngOf(108, 108))
+			w.Write(fixtures.PNG(108, 108))
 		case "/pixel.png":
-			w.Write(pngOf(1, 1))
+			w.Write(fixtures.PNG(1, 1))
 		case "/photo.png":
-			w.Write(pngOf(640, 480))
+			w.Write(fixtures.PNG(640, 480))
 		default:
 			http.NotFound(w, r)
 		}
@@ -148,7 +148,7 @@ func TestRead_FetchRemoteLabelsImagesByMinEdgeAndArea(t *testing.T) {
 		`<img src="` + srv.URL + `/pixel.png"><img src="` + srv.URL + `/photo.png">`
 	m := msg("m1", "c1", day(1), "a@example.com", "pics", html)
 	h := newHarness(t, m)
-	h.deps.Images = &images.Fetcher{Client: srv.Client(), Cap: 1 << 20, UserAgent: "test"}
+	h.images = &images.Fetcher{Client: srv.Client(), Cap: 1 << 20, UserAgent: "test"}
 	r := mustOK(t, h.find("read", "m1", "--fetch-remote"))
 	got := map[string]string{}
 	for _, img := range r.jsonList(t, "remote_images") {

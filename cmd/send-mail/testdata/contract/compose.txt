@@ -5,7 +5,7 @@ exit 0
 --- stdout
 draft   20260822-120000-invoice-august-XXXX
 account gmail (me@example.com)
-preview $TMP/drafts/20260822-120000-invoice-august-XXXX.html
+preview $TMP/state/drafts/20260822-120000-invoice-august-XXXX.html
 size    3.3 KB
 
 nothing has been sent. to send exactly this draft:

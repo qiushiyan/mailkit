@@ -3,7 +3,7 @@ exit 0
 --- stdout
 draft   20260822-120000-big-XXXX
 account gmail (me@example.com)
-preview $TMP/drafts/20260822-120000-big-XXXX.html
+preview $TMP/state/drafts/20260822-120000-big-XXXX.html
 size    13.4 KB
 warning: 13.4 KB is over the 10.0 KB limit for gmail -- the send will be refused
 

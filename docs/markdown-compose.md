@@ -93,10 +93,11 @@ the read side's shape (`--raw`). The cost accepted: pasted content with
 markdown-significant characters transforms or is refused, so every refusal
 points at the escape.
 
-The three modes refuse to mix — `--commit`/`--list` with compose-only flags,
-`--commit` with `--list`, `--body` with `--body-file` are errors, not silent
-precedence. No extension sniffing on `--body-file`: stdin has no extension,
-and the format is not a property of a file name.
+Each act is its own command, so a flag that would not change the send is
+refused by the parser, never silently ignored, and `--body` and
+`--body-file` are one required choice. No extension sniffing on
+`--body-file`: stdin has no extension, and the format is not a property of
+a file name.
 
 ## Preview
 
@@ -106,8 +107,8 @@ access, a CSP meta blocks every network load — so author-controlled HTML can
 neither run nor phone home from a page that auto-opens. The Format row states
 the actual MIME shape (`Text + HTML`): the wire retains no markdown
 provenance, and the page must not claim metadata the bytes do not carry.
-`Parsed` distinguishes an absent part from an empty one, and the plain
-alternative stays inspectable in a collapsed section.
+The parsed message distinguishes an absent part from an empty one, and the
+plain alternative stays inspectable in a collapsed section.
 
 ## Out of scope, deliberately
 
@@ -116,7 +117,7 @@ alternative stays inspectable in a collapsed section.
   asked for.
 - **GFM tables / strikethrough / task lists** — one-line extensions when
   needed.
-- **Quoting the original in a reply** — `--reply` threads the answer
+- **Quoting the original in a reply** — `reply` threads the answer
   (`docs/go-design.md` § Replies) and carries only what the author writes;
   a markdown blockquote of the original waits until asked.
 - **Read-side markdown** (HTML→markdown for `mail-find`) — different

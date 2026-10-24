@@ -5,8 +5,9 @@ has an exact answer.
 
 ## `thread` -- what the provider already grouped
 
-`mail-find thread <id>` returns Gmail's own thread in one `threads.get` call.
-Exact, cheap, no heuristics. Right answer for a human reply chain.
+`mail-find thread <id>` returns the provider's own grouping (Gmail's thread,
+Outlook's conversation) in one call. Exact, cheap, no heuristics. Right
+answer for a human reply chain.
 
 It is also much weaker than it sounds. Gmail groups a reply chain, plus
 same-subject mail inside a short window. Measured on a real run of
@@ -50,7 +51,7 @@ Bare runs are the fallback, used only when a message labels nothing.
 | probe | weight | bounded by time? |
 |---|---|---|
 | shared identifier | 5 | no -- an order number is distinctive whenever it appears |
-| same Gmail thread | 3 | n/a |
+| same conversation | 3 | n/a |
 | same sender domain | 2 | yes, +/- `--window` days |
 | subject token overlap | 1 | yes, +/- `--window` days |
 
@@ -109,9 +110,9 @@ of it is reachable from `thread`.
 
 # Reading a reply chain
 
-`mail-find thread <id> --transcript` renders the thread as one chronological
-transcript. Nothing is reworded; text is rearranged and repeated copies are
-dropped.
+`mail-find thread <id>` renders the conversation as one chronological
+transcript; `--raw` gives every message whole. Nothing is reworded; text is
+rearranged and repeated copies are dropped.
 
 ## What the raw form looks like
 
@@ -142,7 +143,7 @@ destroyed data on the first real forward tried: Apple Mail prefixes
 reply-shaped pattern matched and all 6390 characters of a single-message thread
 were folded into nothing.
 
-So the check is now empirical. Before folding, the quoted block's prose lines
+So the check is empirical. Before folding, the quoted block's prose lines
 are compared against everything already seen in the thread; below 80% coverage
 the block stays, with the reason recorded in `fold_rejected`. Structural lines
 (attribution, header blocks, `E:`/`T:` contact rows) are excluded from the

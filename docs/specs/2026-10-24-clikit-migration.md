@@ -1,10 +1,13 @@
-# mailkit on clikit: proposal
+# mailkit on clikit
 
-Approved 2026-10-24 with every recommendation under **Decisions for you**;
-being built in the order of **Sequence**. The rest follows from the house
-standards
-(`~/.claude-accounts/qiushiyan@planlab.ai/skills/go-cli/SKILL.md`, `MIGRATE.md`
-beside it) and from what the code shows today.
+Shipped 2026-10-24 on `main`, with every recommendation under **Decisions
+for you** taken; its decisions live in `docs/go-design.md`. This is the
+build record: what the proposal argued, the order the work landed in, and
+what callers saw change. It followed the house standards
+(`~/.claude-accounts/qiushiyan@planlab.ai/skills/go-cli/SKILL.md`,
+`MIGRATE.md` beside it). Left to do outside this repository: commit
+`[tools.mailkit]` in `~/dotfiles/twin/.config/twin/twin.toml`, then
+`twin tools install mailkit` on the mini.
 
 ## Done when
 
@@ -186,7 +189,7 @@ Ordered by what is at stake:
    (Draft, error)` writes the `.eml`, `.json` and `.html` together. The
    command opens the preview and prints the result.
 3. **Attachment selection goes to `attachments`.** The rule from
-   `docs/go-design.md` §4, that a name must be unique on the message or the
+   `docs/go-design.md` § The shared layer, that a name must be unique on the message or the
    error lists the handles, and the loop that streams parts into their
    allocated paths both live in the `fetch` command (`app.go:628-710`).
    `attachments.Select(parts, tokens)` and `attachments.Save(ctx, box, dir,
@@ -338,7 +341,7 @@ Each needs your approval:
 - **send-mail's output stays text.** Nothing has failed because it is text.
 - **Dependencies beyond clikit and Kong** (the Google API, azidentity,
   go-mail, goldmark, `x/net/html`, `x/oauth2`, `x/sync`) each earned their
-  place in `docs/go-design.md` §2.
+  place in `docs/go-design.md` § Dependencies.
 
 ## Decisions for you
 

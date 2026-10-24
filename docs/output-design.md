@@ -15,13 +15,13 @@ attribution it cannot resolve.
 ## Rule 2 — `--raw` bypasses it, everywhere
 
 Every processing layer has edge cases, and this one has already been caught
-losing 6390 characters of a forwarded message. `--raw` returns exactly what the
-provider gave: unfolded, untidied, unfiltered.
+losing 6390 characters of a forwarded message. `--raw` returns the message
+without the layer: converted to text, but unfolded, untidied, unfiltered.
 
 | command | default | `--raw` |
 |---|---|---|
-| `read` | quoted tail folded, links de-duplicated | body exactly as returned |
-| `thread` | one chronological transcript | every message as sent |
+| `read` | quoted tail folded, links de-duplicated | body as converted, quotes included |
+| `thread` | one chronological transcript | every message whole, quotes included |
 | `context` | weak and over-common matches filtered | every probe hit, scores intact |
 
 So the processed form is never the *only* form. When it looks wrong, there is
@@ -36,8 +36,7 @@ a runnable command:
 ```
 no file attachments
 
-6 image(s) referenced by URL in the body. To fetch them:
-mail-find read 1a02367a18eae254 --fetch-remote
+6 image(s) referenced by URL in the body. To fetch them: mail-find read 1a02367a18eae254 --fetch-remote
 ```
 
 That message exists because of a real failure: `attachments` reported "no
@@ -48,8 +47,9 @@ command that recovers what it could not return.
 
 Each nudge carries a skip condition, so it fires only when true: no remote
 images, no line; a message that is not part of an exchange gets no thread
-pointer, and the check for one is skipped entirely unless the subject looks
-like a reply — so the common case costs no extra call.
+pointer. Each command a result names is parsed against the grammar by
+`TestPrintedCommandsParse`, so a renamed flag fails the build before it fails
+an agent.
 
 ## Assert only what this layer saw
 
@@ -63,6 +63,6 @@ with the means to check it.
 Not "see README" — a model cannot run a document:
 
 ```
-not authenticated for gmail. Run:
-    gws auth login --scopes=.../gmail.readonly,.../gmail.send
+mail-find: error: gmail search: not authenticated. Run:
+    mail-find auth login --account gmail
 ```

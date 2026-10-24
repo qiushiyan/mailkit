@@ -10,9 +10,11 @@ You are sending mail as the user: a new message, or a reply to one they
 received. Done is a draft the user has seen and approved, committed once,
 with the commit reporting it sent — for a reply, in the original's thread.
 
-Nothing leaves until `send-mail commit`. Composing builds the exact message that
-would go out, writes an HTML preview of it, and stops; a commit sends those
-bytes and nothing else, and a draft sends once.
+Nothing leaves until `send-mail commit`. Composing builds the exact message
+that would go out, writes an HTML preview of it, and stops; a commit sends
+those bytes and nothing else, and a draft sends once. Each command's page,
+`send-mail <command> --help`, has its flags, what markdown refuses, and the
+draft states.
 
 ## Write the body first
 
@@ -29,14 +31,10 @@ over inline `--body` for anything with backticks or `$`, and for a body
 that starts with `-` (a list): inline, that one must be written
 `--body="- …"`.
 
-Two other formats, both explicit:
-
-- **`--format text`:** the bytes go out verbatim as plain text. Use it when
-  `*`, `[`, `#` or `<angle brackets>` are content rather than formatting —
-  pasted logs, code. Markdown compose refuses raw HTML, images, and
-  non-http/mailto links with an error naming this escape; backtick-fencing a
-  snippet also keeps it literal.
-- **`--format html`:** the body is finished HTML, sent as-is.
+Use `--format text` when `*`, `[`, `#` or `<angle brackets>` are content
+rather than formatting, such as a pasted log or code: the bytes go out
+verbatim. Backtick-fencing a snippet inside a markdown body also keeps it
+literal. `--format html` sends a finished HTML body as it is.
 
 ## Compose a new message
 
@@ -65,10 +63,10 @@ send-mail reply 1a10bfe41519179c --all --cc lee@example.com --body-file reply.md
 `ID` is the `id` that `mail-find` returns, from the same `--account`. The
 reply goes to the original's sender — its Reply-To when it names one — and
 `--all` adds everyone else on it except the user; `--cc` and `--bcc`
-add more. Choose reply-all only when the user means everyone on the original
+add more. Choose `--all` only when the user means everyone on the original
 to read the answer. The `Re:` subject and the threading come from the
-original, so `--to` and `--subject` are refused with a reply: Gmail threads
-a reply only when the subjects match.
+original, so `reply` takes no `--to` and no `--subject`: Gmail threads a
+reply only when the subjects match.
 
 The tool chose the recipients, so tell the user who the reply goes to:
 compose prints them, and the preview opens with the message the reply
@@ -108,6 +106,7 @@ The draft's state says what happened:
   reply actions could not match. Fix what the error names and commit again;
   a fix that changes the message means a new draft.
 - **`unknown`:** the provider may have accepted it and the result was lost.
-  Check sent mail for the subject around that time
-  (`mail-find search 'subject:"…" newer_than:1d'`) before re-drafting, and
-  never re-send blind: a duplicate cannot be recalled.
+  Run the `mail-find search` the error prints, which checks sent mail for
+  the subject around that time, before re-drafting; committing the draft
+  again sends nothing and prints it again. Never re-send blind: a duplicate
+  cannot be recalled.

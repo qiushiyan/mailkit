@@ -12,8 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -399,23 +397,15 @@ func (a *app) resolveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			ref := strings.TrimSpace(args[0])
-			if strings.HasPrefix(strings.ToLower(ref), "message://") {
-				decoded, err := url.PathUnescape(ref[len("message://"):])
-				if err != nil {
-					return fmt.Errorf("message:// URL is not decodable: %w", err)
-				}
-				ref = decoded
-			}
-			ref = strings.Trim(ref, "<> ")
-			if ref == "" {
-				return errors.New("nothing to resolve -- pass a Message-ID or a message:// URL")
+			ref, err := mail.ParseRef(args[0])
+			if err != nil {
+				return err
 			}
 			box, err := a.mailbox(ctx)
 			if err != nil {
 				return err
 			}
-			e, err := box.Resolve(ctx, mail.MessageID(ref))
+			e, err := box.Resolve(ctx, ref)
 			if err != nil {
 				if errors.Is(err, mail.ErrNotFound) {
 					return fmt.Errorf("no message in this mailbox has Message-ID %s. Check it came from this account, and that it is the Message-ID header rather than a thread or conversation id", ref)
@@ -622,88 +612,24 @@ func (a *app) fetchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var stored []mail.Part
-			for _, p := range msg.Parts {
-				if _, ok := p.Content.(mail.StoredPart); ok {
-					stored = append(stored, p)
+			var pick []string
+			if !all {
+				if len(names) == 0 {
+					return errors.New("pick attachments with --attachment NAME (repeatable) or --all")
 				}
+				pick = names
 			}
-			if len(stored) == 0 {
-				if len(msg.Parts) > 0 {
-					return fmt.Errorf("message %s has %d attachment(s) but none hold bytes here (cloud links or embedded messages); see mail-find attachments %s", msg.ID, len(msg.Parts), msg.ID)
-				}
-				return fmt.Errorf("message %s has no attachments", msg.ID)
-			}
-			var wanted []mail.Part
-			switch {
-			case all:
-				wanted = stored
-			case len(names) > 0:
-				for _, token := range names {
-					var matches []mail.Part
-					for _, p := range stored {
-						h, _ := p.Handle()
-						if token == p.Name || token == string(h) {
-							matches = append(matches, p)
-						}
-					}
-					switch len(matches) {
-					case 0:
-						avail := make([]string, 0, len(stored))
-						for _, p := range stored {
-							avail = append(avail, p.Name)
-						}
-						return fmt.Errorf("no attachment %q on that message; has: %s", token, strings.Join(avail, ", "))
-					case 1:
-						wanted = append(wanted, matches[0])
-					default:
-						handles := make([]string, 0, len(matches))
-						for _, p := range matches {
-							h, _ := p.Handle()
-							handles = append(handles, string(h))
-						}
-						return fmt.Errorf("%q names %d attachments; pick one by handle: %s", token, len(matches), strings.Join(handles, ", "))
-					}
-				}
-			default:
-				return errors.New("pick attachments with --attachment NAME (repeatable) or --all")
+			wanted, err := attachments.Select(msg, pick)
+			if err != nil {
+				return err
 			}
 			dir := outDir
 			if dir == "" {
 				dir = a.AttachmentDir(msg.ID)
 			}
-			names := make([]string, 0, len(wanted))
-			for _, p := range wanted {
-				names = append(names, p.Name)
-			}
-			paths, err := attachments.Allocate(dir, names)
+			out, err := attachments.Save(ctx, box, dir, wanted)
 			if err != nil {
 				return err
-			}
-			type saved struct {
-				Name string `json:"name"`
-				Path string `json:"path"`
-				Size int64  `json:"size"`
-			}
-			var out []saved
-			for i, p := range wanted {
-				h, _ := p.Handle()
-				fh, err := os.Create(paths[i])
-				if err != nil {
-					return err
-				}
-				err = box.Open(ctx, h, fh)
-				fh.Close()
-				if err != nil {
-					os.Remove(paths[i])
-					return err
-				}
-				st, _ := os.Stat(paths[i])
-				var size int64
-				if st != nil {
-					size = st.Size()
-				}
-				out = append(out, saved{p.Name, paths[i], size})
 			}
 			if !a.text {
 				return a.emit(map[string]any{"saved": out})

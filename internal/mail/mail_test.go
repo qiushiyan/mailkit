@@ -131,3 +131,25 @@ func TestPrepared_BytesCannotBeMutatedAfterReview(t *testing.T) {
 		t.Fatal("a caller's write to Bytes() changed what would be sent")
 	}
 }
+
+// Owner of the Identify input rule: a Message-ID arrives bracketed, bare,
+// or inside a message:// link percent-encoded in either case.
+func TestParseRef(t *testing.T) {
+	for in, want := range map[string]MessageID{
+		"<abc.123@mail.example>":                   "abc.123@mail.example",
+		"  abc.123@mail.example ":                  "abc.123@mail.example",
+		"message://%3Cabc.123@mail.example%3E":     "abc.123@mail.example",
+		"MESSAGE://%3cabc+123@mail.example%3e":     "abc+123@mail.example",
+		"message://%3Cabc%2B123%40mail.example%3E": "abc+123@mail.example",
+	} {
+		got, err := ParseRef(in)
+		if err != nil || got != want {
+			t.Errorf("ParseRef(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "<>", "message://", "message://%zz"} {
+		if got, err := ParseRef(in); err == nil {
+			t.Errorf("ParseRef(%q) = %q, want an error", in, got)
+		}
+	}
+}

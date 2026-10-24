@@ -1,0 +1,5 @@
+$ mail-find fetch files --attachment ../../../etc/passwd --attachment h2
+exit 0
+--- stdout
+{"saved":[{"name":"../../../etc/passwd","path":"$TMP/attachments/files/etc-passwd-2","size":7},{"name":"report.pdf","path":"$TMP/attachments/files/report-3.pdf","size":7}]}
+--- stderr

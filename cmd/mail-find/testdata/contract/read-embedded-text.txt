@@ -1,0 +1,22 @@
+$ mail-find read kinds --text
+exit 0
+--- stdout
+Date      Fri, 07 Aug 2026 10:00:00 +0000
+From      a@example.com
+To        me@example.com
+Subject   FW: see attached
+Attach    Budget approval (0 B) [embedded_message]
+
+--- embedded message: Budget approval
+    From: boss@corp.example
+    Date: Sat, 01 Aug 2026 10:00:00 +0000
+    Subject: Budget approval
+
+The budget for the next quarter is approved as submitted, please proceed.
+--- end embedded message
+Attach    deck.pptx (2.0 KB) [cloud_link]
+
+Forwarding the approval as an attachment, and the deck as a link.
+
+attachment "Budget approval" is an embedded message from boss@corp.example: "Budget approval" -- its text is printed below its attachment line, not in the body
+--- stderr

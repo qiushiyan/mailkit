@@ -1,0 +1,5 @@
+$ mail-find attachments lunch --text
+exit 0
+--- stdout
+no file attachments
+--- stderr

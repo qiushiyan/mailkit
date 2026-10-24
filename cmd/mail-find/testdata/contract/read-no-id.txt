@@ -1,0 +1,5 @@
+$ mail-find read
+exit 1
+--- stdout
+--- stderr
+mail-find read: accepts 1 arg(s), received 0

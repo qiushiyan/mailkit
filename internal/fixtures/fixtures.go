@@ -6,11 +6,17 @@
 package fixtures
 
 import (
+	"bytes"
 	"encoding/json/v2"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	gm "google.golang.org/api/gmail/v1"
 
@@ -67,3 +73,41 @@ func Thread(t testing.TB, id string) []mail.Message {
 
 // RawJSON returns a fixture's bytes for cassette servers.
 func RawJSON(t testing.TB, name string) []byte { return read(t, name) }
+
+// Msg builds a scenario message. The fold and clustering rules are tested
+// on conversations built from it rather than from serialised fixtures, so a
+// type change breaks compilation, not a fixture.
+func Msg(id, conv string, received time.Time, from, subject, html string) mail.Message {
+	return mail.Message{
+		ID: id, ConversationID: conv, MessageID: mail.MessageID(id + "@test"),
+		Received: received, DateHeader: received.Format(time.RFC1123Z),
+		From: mail.ParseAddress(from), To: []mail.Address{{Email: "me@example.com"}}, Subject: subject,
+		Body: mail.Body{HTML: html},
+	}
+}
+
+// Day is n days after 2026-08-01 10:00 UTC, the scenarios' calendar.
+func Day(n int) time.Time { return time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC).AddDate(0, 0, n) }
+
+// Para is an HTML body of one paragraph per line.
+func Para(lines ...string) string {
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString("<p>" + l + "</p>")
+	}
+	return b.String()
+}
+
+// PNG is an image of the given size, for the size-label rules: the real
+// pictures from recorded mail are not in the repository.
+func PNG(w, h int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, color.RGBA{uint8(x), uint8(y), 0, 255})
+		}
+	}
+	var b bytes.Buffer
+	_ = png.Encode(&b, img)
+	return b.Bytes()
+}

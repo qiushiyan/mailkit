@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject x --body-file $TMP/nope.md --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: body file not found: $TMP/nope.md

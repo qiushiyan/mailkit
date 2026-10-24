@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject img --body '![shot](https://example.com/x.png)' --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: images are not supported in markdown bodies: a remote image is a read receipt for the sender's preview, a local path is a broken link for the recipient; use --attach

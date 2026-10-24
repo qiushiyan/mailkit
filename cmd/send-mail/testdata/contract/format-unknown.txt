@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject x --body hi --format rtf
+exit 1
+--- stdout
+--- stderr
+send-mail: --format must be text, html, or markdown; got "rtf"

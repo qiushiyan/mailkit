@@ -1,0 +1,6 @@
+$ send-mail --to a@example.com --subject x --body hi --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: gmail account: not authenticated. Run:
+    mail-find auth login --account gmail

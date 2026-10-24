@@ -1,0 +1,5 @@
+$ mail-find attachments kinds
+exit 0
+--- stdout
+{"attachments":[{"name":"Budget approval","kind":"embedded_message","size":0,"mime_type":"message/rfc822","inline":false,"truncated":false,"embedded":{"from":"boss@corp.example","to":"me@example.com","date":"Sat, 01 Aug 2026 10:00:00 +0000","subject":"Budget approval","body":"The budget for the next quarter is approved as submitted, please proceed.","attachments":[]}},{"name":"deck.pptx","kind":"cloud_link","url":"https://drive.example/deck","size":2048,"mime_type":"application/vnd.ms-powerpoint","inline":false,"truncated":false}],"next_steps":[],"remote_image_urls":[]}
+--- stderr

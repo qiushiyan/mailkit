@@ -1,0 +1,5 @@
+$ send-mail --reply liam --subject Keys --body hi
+exit 1
+--- stdout
+--- stderr
+send-mail: a reply's subject is the original's with "Re:" -- Gmail threads a reply only when the subjects match; drop --subject

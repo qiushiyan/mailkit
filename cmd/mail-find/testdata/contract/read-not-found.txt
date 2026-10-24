@@ -1,0 +1,5 @@
+$ mail-find read nope
+exit 1
+--- stdout
+--- stderr
+mail-find read: message nope: not found

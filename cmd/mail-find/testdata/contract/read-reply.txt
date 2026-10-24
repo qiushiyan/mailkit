@@ -1,0 +1,5 @@
+$ mail-find read 19feba581a535ea0
+exit 0
+--- stdout
+{"id":"19feba581a535ea0","conversation_id":"19fd6b394c784f9b","message_id":"3DFC1624-83C6-42B3-B503-C2C1E12E48F7@gmail.com","date":"Mon, 10 Aug 2026 13:28:28 +0100","from":"Qiushi Yan <qiushi.yann@gmail.com>","to":"Fareya Hashim <FHashim@quintainliving.com>","subject":"Re: Quintain Living - 819 Solar","snippet":"Hi, Thanks for the heads up. I have signed on agreement on Docusign. Regards Qiushi On Aug 10, 2026, at 10:50, Fareya Hashim &lt;FHashim@quintainliving.com&gt; wrote: We are unable to remove furniture","body":"Hi,\n\nThanks for the heads up. I have signed on agreement on Docusign.\n\nRegards\n\nQiushi","quoted_chars":368,"attachments":[],"next_steps":["1 of 6 messages in this conversation. For the whole exchange: mail-find thread 19feba581a535ea0"]}
+--- stderr

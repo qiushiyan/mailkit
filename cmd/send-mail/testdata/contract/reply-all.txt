@@ -1,0 +1,14 @@
+$ send-mail --reply-all liam --cc boss@example.com --body 'Refund, please.' --no-open
+exit 0
+--- stdout
+draft   20260822-120000-re-refund-request-XXXX
+account gmail (me@example.com)
+answers Liam <liam@vendor.example>, "Re: Refund request", Sun, 02 Aug 2026 10:00:00 +0000
+to      liam@vendor.example
+cc      billing@vendor.example, boss@example.com
+preview $TMP/drafts/20260822-120000-re-refund-request-XXXX.html
+size    876 B
+
+nothing has been sent. to send exactly this draft:
+    send-mail --commit 20260822-120000-re-refund-request-XXXX
+--- stderr

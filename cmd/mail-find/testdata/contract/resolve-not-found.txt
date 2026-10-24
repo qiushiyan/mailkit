@@ -1,0 +1,5 @@
+$ mail-find resolve nope@nowhere
+exit 1
+--- stdout
+--- stderr
+mail-find resolve: no message in this mailbox has Message-ID nope@nowhere. Check it came from this account, and that it is the Message-ID header rather than a thread or conversation id

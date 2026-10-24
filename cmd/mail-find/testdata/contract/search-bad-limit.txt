@@ -1,0 +1,5 @@
+$ mail-find search lunch --limit x
+exit 1
+--- stdout
+--- stderr
+mail-find search: invalid argument "x" for "--limit" flag: strconv.ParseInt: parsing "x": invalid syntax

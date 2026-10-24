@@ -1,0 +1,6 @@
+$ mail-find attachments 1a01c98dd4e47691 --text
+exit 0
+--- stdout
+branch_13404.png  11.1 KB  image/png  [inline]
+contact-table-branch_13404.png  11.1 KB  image/png  [inline]
+--- stderr

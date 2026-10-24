@@ -1,0 +1,5 @@
+$ send-mail --to not-an-address --subject x --body hi --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: "not-an-address" does not look like an email address

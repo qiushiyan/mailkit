@@ -1,0 +1,5 @@
+$ mail-find fetch files --attachment nope.pdf
+exit 1
+--- stdout
+--- stderr
+mail-find fetch: no attachment "nope.pdf" on that message; has: ../../../etc/passwd, report.pdf, report.pdf

@@ -1,0 +1,5 @@
+$ mail-find auth login --account outlook
+exit 0
+--- stdout
+logged in outlook
+--- stderr

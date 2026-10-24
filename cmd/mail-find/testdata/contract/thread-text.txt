@@ -1,0 +1,109 @@
+$ mail-find thread 19fd6b394c784f9b --text
+exit 0
+--- stdout
+--- 1. Thu, 6 Aug 2026 10:51:55 +0000
+    Fareya Hashim <FHashim@quintainliving.com>
+    to: qiushi.yann@gmail.com
+
+Dear Qiushi,
+
+I hope you are well.
+
+My names Fareya, I will now be your main point of contact. I will be handing the next part of your application.
+
+From the information provided to me, it has come to my attention that you will be moving in on an event day. Please be aware that most of the roads surrounding your apartment will be closed after 12:00pm.  To help you avoid traffic I recommend arriving around 10:00am on your move-in date.
+
+Please let me know if this arrangement works for you so that we can proceed with your move-in date.
+
+Kind regards,
+
+FAREYA HASHIM
+ Tenancy Coordinator
+ E: FHashim@quintainliving.com
+ T: +44 7523 269389
+ quintainliving.com
+
+ [image: Quintain Living] ( https://www.quintain.co.uk/~/media/Images/Q/Quintain-V4/ql-disclaimer-september-2025.png )
+
+Quintain Living Ltd. Registered in England and Wales with registered number 08925834. Registered parent company office: 180 Great Portland Street, London, W1W 5QZ.
+
+--- 2. Sat, 8 Aug 2026 22:15:54 +0100
+    Qiushi Yan <qiushi.yann@gmail.com>
+    to: Fareya Hashim <FHashim@quintainliving.com>
+
+Hi Fareya,
+
+Thanks for the heads up. I should be able to arrive at 10AM 15 August.
+
+Can you also remind me what are the next steps around the moving in process?
+
+Regards,
+
+Qiushi
+
+    [1046 chars of quoted history folded; those turns appear above]
+
+--- 3. Sat, 8 Aug 2026 23:19:22 +0100
+    Qiushi Yan <qiushi.yann@gmail.com>
+    to: Fareya Hashim <FHashim@quintainliving.com>
+
+Also, is it possible to remove the coffee table and the TV sideboard in the living room before or on my move-in date, and store them until the end of my tenancy? I hope to buy another office desk, so it would be helpful to have these tables removed.
+
+    [1335 chars of quoted history folded; those turns appear above]
+
+--- 4. Mon, 10 Aug 2026 09:46:42 +0000
+    Fareya Hashim <FHashim@quintainliving.com>
+    to: Qiushi Yan <qiushi.yann@gmail.com>
+
+Hello Qiushi,
+
+I hope you’re having a lovely morning.
+
+I have sent over the tenancy agreement via Docusign. Please complete this at your earliest convenience. Once all documents have been signed, I can send over the payment link.
+
+Kind regards,
+
+FAREYA HASHIM
+ Tenancy Coordinator
+ E: FHashim@quintainliving.com
+ T: +44 7523 269389
+ quintainliving.com
+
+    [1825 chars of quoted history folded; those turns appear above]
+
+--- 5. Mon, 10 Aug 2026 09:50:42 +0000
+    Fareya Hashim <FHashim@quintainliving.com>
+    to: Qiushi Yan <qiushi.yann@gmail.com>
+
+Hello Qiushi,
+
+We are unable to remove furniture as you have opted for a furnished apartment. If you would like to have furniture removed, you would have to store this at your own expense. We do offer storage compartments to be purchased once the tenancy has commenced where you can store these items.
+
+Kind regards
+
+FAREYA HASHIM
+ Tenancy Coordinator
+ E: FHashim@quintainliving.com
+ T: +44 7523 269389
+ quintainliving.com
+
+    [2185 chars of quoted history folded; those turns appear above]
+
+--- 6. Mon, 10 Aug 2026 13:28:28 +0100
+    Qiushi Yan <qiushi.yann@gmail.com>
+    to: Fareya Hashim <FHashim@quintainliving.com>
+
+Hi,
+
+Thanks for the heads up. I have signed on agreement on Docusign.
+
+Regards
+
+Qiushi
+
+    [368 chars of quoted history folded; those turns appear above]
+
+transcript 2234 chars from 9003 raw (6769 folded as repetition)
+
+--raw for every message exactly as sent, quotes and all
+--- stderr

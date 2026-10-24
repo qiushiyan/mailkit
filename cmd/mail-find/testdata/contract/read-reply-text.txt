@@ -1,0 +1,20 @@
+$ mail-find read 19feba581a535ea0 --text
+exit 0
+--- stdout
+Date      Mon, 10 Aug 2026 13:28:28 +0100
+From      Qiushi Yan <qiushi.yann@gmail.com>
+To        Fareya Hashim <FHashim@quintainliving.com>
+Subject   Re: Quintain Living - 819 Solar
+
+Hi,
+
+Thanks for the heads up. I have signed on agreement on Docusign.
+
+Regards
+
+Qiushi
+
+[368 chars of quoted history folded -- it repeats earlier turns; --raw to see it]
+
+1 of 6 messages in this conversation. For the whole exchange: mail-find thread 19feba581a535ea0
+--- stderr

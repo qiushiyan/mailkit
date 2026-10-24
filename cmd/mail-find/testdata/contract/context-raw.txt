@@ -1,0 +1,5 @@
+$ mail-find context seed --raw
+exit 0
+--- stdout
+{"seed":{"id":"seed","conversation_id":"c-seed","date":"Tue, 11 Aug 2026 10:00:00 +0000","from":"shop@store.example","subject":"Order 555123987 confirmed"},"signals":{"identifiers":["555123987"],"subject_tokens":["order"],"domain":"store.example"},"dropped_as_too_common":[],"below_min_score":0,"related":[{"id":"order","conversation_id":"c-order","date":"Sun, 02 Aug 2026 10:00:00 +0000","from":"Alice <alice@shop.example>","subject":"Your order 123456789","score":1,"why":["subject overlap: order"]},{"id":"newsletter","conversation_id":"c-news","date":"Wed, 12 Aug 2026 10:00:00 +0000","from":"news@store.example","subject":"Autumn newsletter","score":2,"why":["same sender domain (store.example) within 30 days"]},{"id":"courier","conversation_id":"c-courier","date":"Thu, 13 Aug 2026 10:00:00 +0000","from":"courier@delivery.example","subject":"Your parcel","score":5,"why":["shares identifier 555123987"]}],"next_steps":[]}
+--- stderr

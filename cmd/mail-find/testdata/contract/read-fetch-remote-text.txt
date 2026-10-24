@@ -1,0 +1,15 @@
+$ mail-find read pics --fetch-remote --text --out $TMP/pics
+exit 0
+--- stdout
+Date      Mon, 03 Aug 2026 10:00:00 +0000
+From      a@example.com
+To        me@example.com
+Subject   Pictures
+Remote    $TMP/pics/wordmark.png  319x43  <- small
+Remote    $TMP/pics/avatar.png  108x108  <- small
+Remote    $TMP/pics/pixel.png  1x1  <- pixel
+Remote    $TMP/pics/photo.png  640x480
+
+A message whose pictures carry the content.
+[image] ( $SERVER/wordmark.png )[image] ( $SERVER/avatar.png )[image] ( $SERVER/pixel.png )[image] ( $SERVER/photo.png )
+--- stderr

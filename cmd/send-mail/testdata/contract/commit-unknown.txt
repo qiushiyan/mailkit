@@ -1,0 +1,6 @@
+$ send-mail --commit 20260822-120000-flaky-XXXX
+exit 1
+--- stdout
+--- stderr
+send-mail: draft 20260822-120000-flaky-XXXX has an unknown outcome: the provider may have accepted it. Before re-drafting, check sent mail (the Message-ID is rewritten on send, so search by subject):
+    mail-find search 'subject:"flaky" newer_than:1d' --account gmail

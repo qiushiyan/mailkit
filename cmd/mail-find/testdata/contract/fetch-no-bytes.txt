@@ -1,0 +1,5 @@
+$ mail-find fetch kinds --all
+exit 1
+--- stdout
+--- stderr
+mail-find fetch: message kinds has 2 attachment(s) but none hold bytes here (cloud links or embedded messages); see mail-find attachments kinds

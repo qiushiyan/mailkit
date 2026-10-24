@@ -1,0 +1,5 @@
+$ mail-find search from:nobody.example
+exit 0
+--- stdout
+{"hits":[],"next_steps":["0 hits. Widen one bound at a time: drop the date, use the sender's domain instead of the address, or use a shorter phrase. Provider syntax goes through untouched with: mail-find search QUERY --native"]}
+--- stderr

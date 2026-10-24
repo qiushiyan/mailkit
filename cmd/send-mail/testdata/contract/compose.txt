@@ -1,0 +1,13 @@
+$ send-mail --to a@example.com,b@example.com --cc c@example.com --bcc d@example.com --subject 'Invoice — August' --body 'Please find the invoice attached.
+
+Thanks' --attach $TMP/invoice.pdf --no-open
+exit 0
+--- stdout
+draft   20260822-120000-invoice-august-XXXX
+account gmail (me@example.com)
+preview $TMP/drafts/20260822-120000-invoice-august-XXXX.html
+size    3.3 KB
+
+nothing has been sent. to send exactly this draft:
+    send-mail --commit 20260822-120000-invoice-august-XXXX
+--- stderr

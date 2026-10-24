@@ -1,0 +1,5 @@
+$ send-mail --subject x --body hi --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: at least one --to recipient is required

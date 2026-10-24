@@ -1,0 +1,8 @@
+$ mail-find --text search lunch
+exit 0
+--- stdout
+lunch  Thu, 06 Aug 2026 10:00:00 +0000
+  from: bob@other.example
+  subj: Lunch
+
+--- stderr

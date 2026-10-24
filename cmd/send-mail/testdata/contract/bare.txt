@@ -1,0 +1,5 @@
+$ send-mail
+exit 1
+--- stdout
+--- stderr
+send-mail: nothing to do: compose with --to/--subject/--body, reply with --reply ID, send a draft with --commit DRAFT-ID, or --list

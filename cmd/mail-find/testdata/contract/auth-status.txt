@@ -1,0 +1,5 @@
+$ mail-find auth status
+exit 0
+--- stdout
+{"account":"gmail","address":"me@example.com","send_limit":26214400}
+--- stderr

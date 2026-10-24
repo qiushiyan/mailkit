@@ -1,0 +1,5 @@
+$ mail-find read lunch --bogus
+exit 1
+--- stdout
+--- stderr
+mail-find read: unknown flag: --bogus

@@ -1,0 +1,31 @@
+$ mail-find
+exit 0
+--- stdout
+Search, read and download from mail history. Nothing here sends or changes mail.
+
+Output is JSON; --text gives the human form. Every result's next_steps are
+runnable commands for what was seen but not done. ID is the "id" field of a
+search hit; a Message-ID (the RFC 822 header, or a message:// link) goes to
+resolve first.
+
+Usage:
+  mail-find [command]
+
+Available Commands:
+  attachments list a message's attachments
+  auth        sign in and check credentials
+  context     messages about the same real-world thing, across threads and senders (heuristic; each hit says why)
+  fetch       download attachments to a local directory
+  help        Help about any command
+  read        full message: headers, body, attachment manifest
+  resolve     find a message from a Message-ID or a message:// URL dragged out of a mail client
+  search      search mail history in the portable grammar
+  thread      every message the provider grouped with this one, as one transcript
+
+Flags:
+      --account string   which account: gmail|outlook (default "gmail")
+  -h, --help             help for mail-find
+      --text             human-readable output instead of JSON
+
+Use "mail-find [command] --help" for more information about a command.
+--- stderr

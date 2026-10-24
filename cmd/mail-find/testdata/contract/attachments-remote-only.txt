@@ -1,0 +1,5 @@
+$ mail-find attachments 1a02340ea531858a
+exit 0
+--- stdout
+{"attachments":[],"next_steps":["6 image(s) referenced by URL in the body. To fetch them: mail-find read 1a02340ea531858a --fetch-remote"],"remote_image_urls":["https://www.taskrabbit.co.uk/v3/assets/email2/layout/taskrabbit-logo-rabbit.png","https://res.cloudinary.com/taskrabbit-com/image/upload/c_fill,g_faces,h_108,w_108/v1647723253/whzznhvichxs7wykbg3r.jpg","https://cdn.asset-services.taskrabbit.com/chat_resources/70674000/01m0hkybmrqhc448exr0q3wbg7.png","https://www.taskrabbit.co.uk/v3/assets/email2/download/app_store_en_gb.png","https://www.taskrabbit.co.uk/v3/assets/email2/download/play_store_en_gb.png","https://sendgrid-tracking.taskrabbit.com/wf/open?upn=u001.q8eh-2Bs8OVZTDYT4WFaLcIuMAzlDT5H8Za60vf36EiXdIN11Mc-2BuFNy1rl8nMAU9uxfArEC4TTKgoce5qlGhk6mw-2BIG9eqNmAwZ57q2gUg1eH0WhdJMKoBrzfAvdV6QlSGpwJqITIL-2FgRYKrkmSZuIAEvrs13slyMeZ3m1eiAo9TyyECO9uKRcgkBwEpXITvmyiJr9LoCijrYBUNC11jxfxyFS4hFdzl9nb4-2BrQwB0rzBxA0uCkhC14psDl-2BYrq8z"]}
+--- stderr

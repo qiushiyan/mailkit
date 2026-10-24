@@ -1,0 +1,7 @@
+$ send-mail --commit 20260822-120000-re-refund-request-XXXX
+exit 0
+--- stdout
+sent as me@example.com -> liam@vendor.example
+subject: Re: Refund request
+in reply to Liam <liam@vendor.example>, in its thread ticket
+--- stderr

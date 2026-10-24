@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject x --body a --body-file $TMP/note.txt
+exit 1
+--- stdout
+--- stderr
+send-mail: --body and --body-file are two sources for one body; use one

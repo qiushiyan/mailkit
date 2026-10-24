@@ -1,0 +1,5 @@
+$ mail-find search label:inbox --native
+exit 1
+--- stdout
+--- stderr
+mail-find search: --native is not supported on gmail

@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject x
+exit 1
+--- stdout
+--- stderr
+send-mail: give a body with --body or --body-file (use - for stdin)

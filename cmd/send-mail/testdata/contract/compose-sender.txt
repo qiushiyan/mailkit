@@ -1,0 +1,11 @@
+$ send-mail --to a@example.com --subject alias --body 'hello there' --sender alias@example.com --no-open
+exit 0
+--- stdout
+draft   20260822-120000-alias-XXXX
+account gmail (alias@example.com)
+preview $TMP/drafts/20260822-120000-alias-XXXX.html
+size    688 B
+
+nothing has been sent. to send exactly this draft:
+    send-mail --commit 20260822-120000-alias-XXXX
+--- stderr

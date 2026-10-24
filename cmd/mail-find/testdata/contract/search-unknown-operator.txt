@@ -1,0 +1,8 @@
+$ mail-find search label:inbox
+exit 1
+--- stdout
+--- stderr
+mail-find search: "label:inbox" is not in the portable grammar:
+from:ADDR|DOMAIN  to:ADDR|DOMAIN  subject:WORD|"PHRASE"  has:attachment
+after:YYYY/MM/DD  before:YYYY/MM/DD  newer_than:Nd  older_than:Nd  "exact phrase"  word
+Use --native to pass provider syntax through untouched

@@ -1,0 +1,9 @@
+$ mail-find resolve abc.123@mail.example --text
+exit 0
+--- stdout
+ref  Wed, 05 Aug 2026 10:00:00 +0000
+  from: a@example.com
+  subj: hello
+
+Read it:  mail-find read ref
+--- stderr

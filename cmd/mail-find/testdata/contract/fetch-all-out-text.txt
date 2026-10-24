@@ -1,0 +1,7 @@
+$ mail-find fetch files --all --out $TMP/out --text
+exit 0
+--- stdout
+$TMP/out/etc-passwd  (7 B)
+$TMP/out/report.pdf  (7 B)
+$TMP/out/report-2.pdf  (7 B)
+--- stderr

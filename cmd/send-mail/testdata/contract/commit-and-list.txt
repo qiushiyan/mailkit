@@ -1,0 +1,5 @@
+$ send-mail --commit 20260822-120000-flaky-XXXX --list
+exit 1
+--- stdout
+--- stderr
+send-mail: --commit and --list are different modes; use one

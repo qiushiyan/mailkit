@@ -1,0 +1,12 @@
+$ send-mail --to a@example.com --subject big --body 'see attached' --attach $TMP/big.bin --no-open
+exit 0
+--- stdout
+draft   20260822-120000-big-XXXX
+account gmail (me@example.com)
+preview $TMP/drafts/20260822-120000-big-XXXX.html
+size    13.4 KB
+warning: 13.4 KB is over the 10.0 KB limit for gmail -- the send will be refused
+
+nothing has been sent. to send exactly this draft:
+    send-mail --commit 20260822-120000-big-XXXX
+--- stderr

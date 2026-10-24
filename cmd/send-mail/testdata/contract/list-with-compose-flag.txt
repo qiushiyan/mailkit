@@ -1,0 +1,5 @@
+$ send-mail --list --to a@example.com
+exit 1
+--- stdout
+--- stderr
+send-mail: --list takes no other flags; drop --to

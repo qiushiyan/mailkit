@@ -1,0 +1,7 @@
+$ mail-find attachments 1a02340ea531858a --text
+exit 0
+--- stdout
+no file attachments
+
+6 image(s) referenced by URL in the body. To fetch them: mail-find read 1a02340ea531858a --fetch-remote
+--- stderr

@@ -1,0 +1,5 @@
+$ mail-find fetch 1a01c98dd4e47691 --attachment 1a01c98dd4e47691/ANGjdJ89snB-858fa1vWNSAecXwky0OVDWNoImZ4-VcuKPsuDtE_F583BeXEHbjKm3p_-O30eMLqKSTzrPuVwMooh7hsxtnQzykPrKc9jzbBdjpZGTbd-mJfLqTfiDKjKDTgOZYurCL9BQNq8BUuPUtjhKOFj35Hs1JEjJI4KP_d1gEOX9hVQqIhDRRGT4l5k8cimKMwO3h8V3A0-hg8nuOziwU-tTE2jlofWN1HI6PnvyEQiz9i2k9D1qHLxgQpjfeVCRf0_gUPMr7i76HwFjpMLykCXH6QzV_Dbf9piR0weVYUB0FT6PTYu9-QH8xbEHgb1oN4kdHziPBszm-4BQacMki-oCyoYk1HJ7v9QpaA08KcVS_R03bwnHbWzDp12PmZ3IBdo3XuitWXUe82
+exit 0
+--- stdout
+{"saved":[{"name":"branch_13404.png","path":"$TMP/attachments/1a01c98dd4e47691/branch_13404.png","size":9}]}
+--- stderr

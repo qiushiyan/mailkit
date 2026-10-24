@@ -1,0 +1,5 @@
+$ mail-find search 'from:shop.example "order 123456789"'
+exit 0
+--- stdout
+{"hits":[{"id":"order","conversation_id":"c-order","message_id":"order@test","date":"Sun, 02 Aug 2026 10:00:00 +0000","from":"Alice <alice@shop.example>","to":"me@example.com","subject":"Your order 123456789"}],"next_steps":[]}
+--- stderr

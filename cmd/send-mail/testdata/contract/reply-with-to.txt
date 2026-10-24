@@ -1,0 +1,5 @@
+$ send-mail --reply liam --to x@example.com --body hi
+exit 1
+--- stdout
+--- stderr
+send-mail: a reply goes to the original's sender (--reply-all: everyone on it); drop --to, and add other people with --cc

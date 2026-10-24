@@ -1,0 +1,5 @@
+$ mail-find search from:shop.example --limit 1
+exit 0
+--- stdout
+{"hits":[{"id":"restock","conversation_id":"c-restock","message_id":"restock@test","date":"Tue, 04 Aug 2026 10:00:00 +0000","from":"alice@shop.example","to":"me@example.com","subject":"Back in stock"}],"next_steps":[]}
+--- stderr

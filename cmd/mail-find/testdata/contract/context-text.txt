@@ -1,0 +1,19 @@
+$ mail-find context seed --text
+exit 0
+--- stdout
+seed  seed  Tue, 11 Aug 2026 10:00:00 +0000
+      Order 555123987 confirmed
+signals  identifiers=[555123987]  domain=store.example  tokens=[order]
+held back  1 weaker match(es); --min-score 1 to see them
+
+[ 2] newsletter  Wed, 12 Aug 2026 10:00:00 +0000
+     Autumn newsletter
+     from: news@store.example
+     why : same sender domain (store.example) within 30 days
+
+[ 5] courier  Thu, 13 Aug 2026 10:00:00 +0000
+     Your parcel
+     from: courier@delivery.example
+     why : shares identifier 555123987
+
+--- stderr

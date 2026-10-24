@@ -1,0 +1,5 @@
+$ mail-find auth status --text
+exit 0
+--- stdout
+gmail: me@example.com (send limit 25.0 MB)
+--- stderr

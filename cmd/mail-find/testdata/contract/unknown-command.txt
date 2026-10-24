@@ -1,0 +1,5 @@
+$ mail-find bogus
+exit 1
+--- stdout
+--- stderr
+mail-find: unknown command "bogus" for "mail-find"

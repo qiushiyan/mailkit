@@ -1,0 +1,5 @@
+$ send-mail --commit 20260822-120000-flaky-XXXX
+exit 1
+--- stdout
+--- stderr
+send-mail: connection reset by peer

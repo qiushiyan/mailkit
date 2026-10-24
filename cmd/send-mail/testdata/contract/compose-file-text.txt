@@ -1,0 +1,11 @@
+$ send-mail --to a@example.com --subject verbatim --body-file $TMP/note.txt --format text --no-open
+exit 0
+--- stdout
+draft   20260822-120000-verbatim-XXXX
+account gmail (me@example.com)
+preview $TMP/drafts/20260822-120000-verbatim-XXXX.html
+size    304 B
+
+nothing has been sent. to send exactly this draft:
+    send-mail --commit 20260822-120000-verbatim-XXXX
+--- stderr

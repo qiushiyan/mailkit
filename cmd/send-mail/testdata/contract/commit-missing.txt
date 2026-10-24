@@ -1,0 +1,5 @@
+$ send-mail --commit 20260822-120000-nope-XXXX
+exit 1
+--- stdout
+--- stderr
+send-mail: no such draft: 20260822-120000-nope-XXXX

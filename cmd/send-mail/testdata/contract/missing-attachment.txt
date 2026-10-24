@@ -1,0 +1,5 @@
+$ send-mail --to a@example.com --subject x --body hi --attach $TMP/nope.pdf --no-open
+exit 1
+--- stdout
+--- stderr
+send-mail: attachment not found: $TMP/nope.pdf

@@ -1,0 +1,5 @@
+$ mail-find search
+exit 1
+--- stdout
+--- stderr
+mail-find search: accepts 1 arg(s), received 0

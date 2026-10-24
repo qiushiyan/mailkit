@@ -1,0 +1,6 @@
+$ mail-find attachments kinds --text
+exit 0
+--- stdout
+Budget approval  0 B  message/rfc822  [embedded_message: no bytes in the message]
+deck.pptx  2.0 KB  application/vnd.ms-powerpoint  [cloud_link: no bytes in the message]
+--- stderr

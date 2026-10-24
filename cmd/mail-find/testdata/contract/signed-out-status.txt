@@ -1,0 +1,6 @@
+$ mail-find auth status
+exit 1
+--- stdout
+--- stderr
+mail-find auth status: gmail search: not authenticated. Run:
+    mail-find auth login --account gmail

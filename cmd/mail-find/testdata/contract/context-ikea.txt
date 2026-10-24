@@ -1,0 +1,5 @@
+$ mail-find context 1a02367a18eae254 --window 3 --limit 5
+exit 0
+--- stdout
+{"seed":{"id":"1a02367a18eae254","conversation_id":"1a02367a18eae254","date":"Fri, 21 Aug 2026 08:19:48 +0000 (UTC)","from":"Taskrabbit <no-reply@taskrabbit.co.uk>","subject":"Heads up! A change to your upcoming IKEA Assembly"},"signals":{"identifiers":["1623209215"],"subject_tokens":["ikea","assembly"],"domain":"taskrabbit.co.uk"},"dropped_as_too_common":[],"below_min_score":0,"related":[{"id":"1a02340ea531858a","conversation_id":"1a0233fbb408f2b5","date":"Fri, 21 Aug 2026 07:37:30 +0000 (UTC)","from":"Taskrabbit Notifications <no-reply@taskrabbit.co.uk>","subject":"Updates to: IKEA Furniture Assembly","score":3,"why":["same sender domain (taskrabbit.co.uk) within 3 days","subject overlap: ikea, assembly"]}],"next_steps":[]}
+--- stderr

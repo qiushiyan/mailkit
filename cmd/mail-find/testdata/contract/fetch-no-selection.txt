@@ -1,0 +1,5 @@
+$ mail-find fetch files
+exit 1
+--- stdout
+--- stderr
+mail-find fetch: pick attachments with --attachment NAME (repeatable) or --all

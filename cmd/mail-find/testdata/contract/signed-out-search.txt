@@ -1,0 +1,6 @@
+$ mail-find search lunch
+exit 1
+--- stdout
+--- stderr
+mail-find search: gmail search: not authenticated. Run:
+    mail-find auth login --account gmail

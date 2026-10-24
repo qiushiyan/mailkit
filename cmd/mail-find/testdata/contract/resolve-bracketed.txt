@@ -1,0 +1,5 @@
+$ mail-find resolve '<abc.123@mail.example>'
+exit 0
+--- stdout
+{"id":"ref","conversation_id":"c-ref","message_id":"abc.123@mail.example","date":"Wed, 05 Aug 2026 10:00:00 +0000","from":"a@example.com","to":"me@example.com","subject":"hello"}
+--- stderr

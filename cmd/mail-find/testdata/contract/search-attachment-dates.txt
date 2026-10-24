@@ -1,0 +1,5 @@
+$ mail-find search 'subject:invoice has:attachment after:2026/07/01 before:2026/08/01'
+exit 0
+--- stdout
+{"hits":[{"id":"invoice","conversation_id":"c-invoice","message_id":"invoice@test","date":"Wed, 22 Jul 2026 10:00:00 +0000","from":"billing@vendor.example","to":"me@example.com","subject":"Invoice for July"}],"next_steps":[]}
+--- stderr

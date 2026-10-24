@@ -1,0 +1,5 @@
+$ send-mail --commit 20260822-120000-flaky-XXXX --subject changed
+exit 1
+--- stdout
+--- stderr
+send-mail: --commit sends the draft exactly as previewed and takes no other flags; drop --subject

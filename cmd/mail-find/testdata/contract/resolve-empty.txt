@@ -1,0 +1,5 @@
+$ mail-find resolve message://
+exit 1
+--- stdout
+--- stderr
+mail-find resolve: nothing to resolve -- pass a Message-ID or a message:// URL

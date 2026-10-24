@@ -1,0 +1,5 @@
+$ mail-find search '"order 1623209215"'
+exit 0
+--- stdout
+{"hits":[{"id":"1a02367a18eae254","conversation_id":"1a02367a18eae254","message_id":"6a880a241c85a_11e3cb1307429382@ip-172-36-148-196.mail","date":"Fri, 21 Aug 2026 08:19:48 +0000 (UTC)","from":"Taskrabbit <no-reply@taskrabbit.co.uk>","to":"qiushi.yann@gmail.com","subject":"Heads up! A change to your upcoming IKEA Assembly","snippet":"Heads up! George D. is no longer available to complete your task. Hang tight, IKEA will call to establish next steps to make this right! We&#39;re sorry for the inconvenience. Task Details Task IKEA"}],"next_steps":[]}
+--- stderr

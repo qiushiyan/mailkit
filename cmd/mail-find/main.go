@@ -31,7 +31,7 @@ type CLI struct {
 	Account string `enum:"${accounts}" default:"gmail" help:"Which account's mailbox to read. An id from one account means nothing in the other."`
 	Text    bool   `help:"Print the human form instead of one JSON document."`
 
-	Search      SearchCmd      `cmd:"" help:"Find messages by sender, recipient, subject, date or phrase, newest first."`
+	Search      SearchCmd      `cmd:"" help:"Find messages by sender, recipient, subject, date or phrase."`
 	Resolve     ResolveCmd     `cmd:"" help:"Turn a Message-ID, or a message:// link from a mail client, into the message's id."`
 	Read        ReadCmd        `cmd:"" help:"Print one message: headers, the body with verified quoted history folded, and its attachments."`
 	Thread      ThreadCmd      `cmd:"" help:"Print the conversation a message belongs to as one transcript, each turn saying only what it added."`
@@ -241,7 +241,7 @@ func (c *ReadCmd) Run(ctx context.Context, box mail.Mailbox, dirs paths.Dirs, fe
 
 type ThreadCmd struct {
 	ID  string `arg:"" help:"The id of any message in the conversation."`
-	Raw bool   `help:"Print every message exactly as sent, quoted tails included, instead of the transcript."`
+	Raw bool   `help:"Print every message whole, its quoted history included, instead of the transcript."`
 }
 
 func (c *ThreadCmd) Run(ctx context.Context, box mail.Mailbox, out output) error {

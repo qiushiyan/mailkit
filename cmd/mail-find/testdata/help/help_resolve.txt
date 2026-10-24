@@ -1,0 +1,31 @@
+Usage: mail-find resolve <ref> [flags]
+
+Turn a Message-ID, or a message:// link from a mail client, into the message's id.
+
+Finds the message a person is looking at in their mail client. The
+Message-ID is the one identifier every client and provider agree on. A
+message dragged out of Apple Mail arrives as a message:// link holding it,
+percent-encoded, and resolve decodes that.
+
+Arguments:
+  <ref>                    A Message-ID header value, with or without its angle brackets, or a
+                           message:// link.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Examples:
+  mail-find resolve '<6a8976c5.4a0b@mail.example>'
+  mail-find resolve 'message://%3C6a8976c5.4a0b@mail.example%3E'
+
+JSON:
+  One message's envelope, as search prints a hit: id, conversation_id,
+  message_id, date, from, to, cc, subject and snippet.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

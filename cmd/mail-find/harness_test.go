@@ -30,8 +30,11 @@ type harness struct {
 	box  *memory.Mailbox
 	root string // the temporary directory everything lives under
 	dirs paths.Dirs
-	// images fetches remote pictures; nil fetches nothing.
+	// images fetches remote pictures.
 	images *images.Fetcher
+	// open is the account opener; tests swap it for one that must not be
+	// reached.
+	open mail.Opener
 }
 
 func newHarness(t *testing.T, msgs ...mail.Message) *harness {
@@ -39,19 +42,19 @@ func newHarness(t *testing.T, msgs ...mail.Message) *harness {
 	box := memory.New(msgs...)
 	box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }
 	dir := t.TempDir()
-	return &harness{t: t, box: box, root: dir, dirs: paths.Dirs{Config: dir + "/config", State: dir + "/state"},
+	h := &harness{t: t, box: box, root: dir, dirs: paths.Dirs{Config: dir + "/config", State: dir + "/state"},
 		images: &images.Fetcher{Cap: 1 << 20, UserAgent: "test"}}
+	h.open = func(ctx context.Context, account string) (mail.Mailbox, error) {
+		if account != "gmail" && account != "outlook" {
+			return nil, fmt.Errorf("unknown account %q; pick one of gmail, outlook", account)
+		}
+		return h.box, nil
+	}
+	return h
 }
 
 // now is the harness's clock.
 var now = time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
-
-func (h *harness) open(ctx context.Context, account string) (mail.Mailbox, error) {
-	if account != "gmail" && account != "outlook" {
-		return nil, fmt.Errorf("unknown account %q; pick one of gmail, outlook", account)
-	}
-	return h.box, nil
-}
 
 func fakeLogin(ctx context.Context, account string, out func(string)) error {
 	out("logged in " + account)
@@ -70,7 +73,7 @@ func (h *harness) app() clikit.App {
 	a := app
 	a.Options = append(slices.Clone(app.Options),
 		kong.BindTo(h.t.Context(), (*context.Context)(nil)),
-		kong.Bind(mail.Opener(h.open)),
+		kong.Bind(h.open),
 		kong.Bind(h.dirs),
 		kong.Bind(clock(func() time.Time { return now })),
 		kong.Bind(h.images),

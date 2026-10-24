@@ -1,0 +1,34 @@
+Usage: mail-find attachments <id> [flags]
+
+List a message's attachments and the pictures its body only links to.
+
+Lists every part of the message without downloading anything, and the
+pictures its body only links to. A message whose only content is a linked
+screenshot has no attachments: remote_image_urls, and the next step naming
+read --fetch-remote, are where that shows.
+
+Arguments:
+  <id>                     The message's id.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+JSON:
+  attachments, each part as read prints it: name, kind, handle, url, size,
+  mime_type, inline, content_id, truncated, and for an embedded_message its
+  text in embedded (from, to, date, subject, body, attachments). Then
+  remote_image_urls, in the order the body has them, and next_steps.
+
+Attachment kinds:
+  stored            a file or inline picture in the message; fetch downloads it
+  cloud_link        a OneDrive or Drive link; the bytes are at its url, which
+                    fetch does not follow
+  embedded_message  a whole mail attached as a mail; its text is in embedded
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

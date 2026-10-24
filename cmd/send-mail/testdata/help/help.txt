@@ -1,0 +1,39 @@
+Usage: send-mail <command>
+
+send-mail writes a mail draft and a preview of it; only commit sends, and only the previewed bytes.
+
+Mail goes out as the person, and a sent mail cannot be recalled, so writing
+and sending are separate acts. compose and reply build the exact message
+that would go out, write it with an HTML preview, and stop. Only commit
+sends, and it sends those bytes once: a draft that changed since its
+preview is refused, and a sent one cannot be sent again. Show the person the
+preview, and commit only once they have approved it.
+
+send-mail sends from the accounts that mail-find auth login signs in; one
+sign-in covers reading and sending. An error that says the account is not
+authenticated names that command, which needs the person at the keyboard.
+
+Flags:
+  -h, --help    Show context-sensitive help.
+
+Commands:
+  compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE)
+                       Write a draft of a new message and a preview of its exact bytes. Nothing is
+                       sent.
+  reply (--body=BODY | --body-file=FILE) <id>
+                       Write a draft that answers a message, in its thread, and a preview. Nothing
+                       is sent.
+  commit <draft-id>    Send a previewed draft, exactly as previewed, once.
+  list                 List the 30 most recent drafts, newest first, with their state.
+
+Examples:
+  send-mail compose --to alice@example.com --subject "Meter reading" --body-file note.md
+  send-mail reply 1a10bfe41519179c --body-file reply.md
+  send-mail commit 20260822-115120-meter-reading-305f
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run
+
+Run "send-mail <command> --help" for a command's details.

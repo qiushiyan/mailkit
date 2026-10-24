@@ -1,0 +1,19 @@
+Usage: mail-find auth login [flags]
+
+Sign in to --account interactively: a browser for Gmail, a device code for Outlook.
+
+Signs --account in. Gmail opens a browser and waits for its redirect;
+Outlook shows a device code to enter at the address it gives. The token is
+kept under $XDG_CONFIG_HOME/mailkit (by default ~/.config/mailkit) for
+later runs. It needs the person at the keyboard.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

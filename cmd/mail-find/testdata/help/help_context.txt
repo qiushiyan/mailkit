@@ -1,0 +1,57 @@
+Usage: mail-find context <id> [flags]
+
+Find messages about the same real-world thing across threads and senders; each hit says why.
+
+Gathers what is about the same real-world thing as the seed message, such
+as an order, a booking or a tenancy, across threads and senders. It takes
+the seed's identifiers (order and reference numbers; one after a word such
+as order, invoice or ref is preferred to a bare run of digits), its
+sender's domain and its subject words, searches on each, and scores what
+comes back. An identifier is the strong signal; the domain and
+the subject words are weak, and reach only --window days either side of the
+seed.
+
+It is a heuristic: every hit carries why, and is trusted by its why, not by
+its rank. A hit's score is the sum of what it shares with the seed: an
+identifier 5, the seed's own conversation 3, the sender's domain 2, its
+subject words 1. Hits scoring under --min-score are held back, and an
+identifier shared by more than 25 messages is dropped as not distinctive
+(it is a date or a price). Both are reported, and next_steps names the
+command that shows them.
+
+Arguments:
+  <id>                     The id of the message to start from: the seed.
+
+Flags:
+      --window=INT         Days either side of the seed that the weak signals, sender domain and
+                           subject words, reach (default: 30).
+      --limit=INT          Stop after this many related messages (default: 40).
+      --min-score=INT      Hold back hits that score below this; 1 admits a single weak signal
+                           (default: 2).
+      --raw                Keep every hit: the weak ones, and those of an identifier too common to
+                           be distinctive.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Examples:
+  mail-find context 1a02367a18eae254
+  mail-find context 1a02367a18eae254 --min-score 1
+
+JSON:
+    seed                    id, conversation_id, date, from, subject
+    signals                 what was searched on: identifiers, subject_tokens,
+                            domain
+    dropped_as_too_common   each identifier dropped, with reason and hits
+    below_min_score         how many hits were held back
+    related                 oldest first, each with id, conversation_id, date,
+                            from, subject, score and why
+    next_steps
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

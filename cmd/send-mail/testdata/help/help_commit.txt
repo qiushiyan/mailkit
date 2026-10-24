@@ -1,0 +1,39 @@
+Usage: send-mail commit <draft-id>
+
+Send a previewed draft, exactly as previewed, once.
+
+Sends the draft's bytes exactly as previewed, from the account it was
+written on, into the conversation its record names, and prints the address
+it went out as. For a reply it also
+says which conversation the provider put it in; when that is not the
+original's, or the provider does not say, it prints the mail-find thread
+command that shows where it landed.
+
+A failure before anything left returns the draft to pending: fix what the
+error names and commit again, or write a new draft if the fix changes the
+message. A failure after the bytes may have left makes the outcome unknown:
+check sent mail with the mail-find search the error prints before writing
+the draft again, because a duplicate cannot be recalled. Committing that
+draft again sends nothing and prints the search again.
+
+Arguments:
+  <draft-id>    The draft id that compose or reply printed.
+
+Inherited flags:
+  -h, --help    Show context-sensitive help.
+
+Examples:
+  send-mail commit 20260822-115120-meter-reading-305f
+
+States:
+  pending   written and not sent; commit sends it, and one never committed
+            is never sent
+  sending   a commit is under way; if none is, it died before recording the
+            outcome, and commit reports the draft as unknown
+  sent      sent once, with the time; it cannot be sent again
+  unknown   the provider may have accepted it and the result was lost
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

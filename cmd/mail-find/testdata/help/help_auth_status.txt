@@ -1,0 +1,17 @@
+Usage: mail-find auth status [flags]
+
+Print the address --account is signed in as, and the largest message it can send.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+JSON:
+  account, address (the one --account sends as), and send_limit in bytes.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

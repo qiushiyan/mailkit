@@ -1,0 +1,56 @@
+Usage: mail-find search <query> [flags]
+
+Find messages by sender, recipient, subject, date or phrase.
+
+Searches the account in a grammar that means the same on Gmail and Outlook.
+Every hit matches every term of the query, a phrase as the provider's
+full-text search reads it. A result that fills --limit may have more
+behind it: raise --limit or narrow the query. A query that scans a thousand
+messages without filling --limit fails and says to narrow it, rather than
+returning a short list that looks complete: add a date or a sender.
+
+The terms of the grammar below must all hold, except subject: terms, of
+which any one may. from: and to: take an address or a bare domain. after:
+includes its day and before: does not, each day in the local time zone;
+newer_than: and older_than: take Nd, Nm (N times 30 days) or Ny (N times
+365). A bare word is a phrase. A term outside the grammar is an error that
+names the grammar; --native passes the query to the provider untouched
+instead.
+
+A hit's snippet is the provider's preview, HTML-escaped by Gmail: read the
+message before quoting it.
+
+Arguments:
+  <query>                  The query in the portable grammar below, as one shell argument: quote it.
+
+Flags:
+      --limit=INT          Stop after this many hits (default: 25).
+      --native             Pass QUERY to the provider untouched, in its own syntax; the hits are not
+                           portable to the other account.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Grammar:
+  from:ADDR|DOMAIN  to:ADDR|DOMAIN  subject:WORD|"PHRASE"  has:attachment
+  after:YYYY/MM/DD  before:YYYY/MM/DD  newer_than:Nd  older_than:Nd  "exact phrase"  word
+
+Examples:
+  mail-find search 'from:taskrabbit.co.uk newer_than:30d'
+  mail-find search 'subject:invoice has:attachment after:2026/07/01 before:2026/08/01'
+  mail-find search '"order 1623209215"' --limit 5
+  mail-find search 'label:inbox' --native
+
+JSON:
+  {"hits": [...], "next_steps": [...]}, with native naming the provider whose
+  syntax --native used. A hit has id, conversation_id, message_id (the RFC
+  822 Message-ID), date (as sent), from, to, cc, subject and snippet; an
+  empty one is left out.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

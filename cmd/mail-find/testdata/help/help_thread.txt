@@ -1,0 +1,44 @@
+Usage: mail-find thread <id> [flags]
+
+Print the conversation a message belongs to as one transcript, each turn saying only what it added.
+
+Reassembles the conversation the provider grouped this message with, oldest
+first, one turn per message. A turn's said is what that message added, its
+quoted history folded the way read folds it, so the turns can be read in
+place of every message. --raw prints every message whole, its quoted
+history included.
+
+A conversation is the provider's grouping: Gmail's thread, Outlook's
+conversation. Mail about the same thing from another sender, or a
+notification that started a thread of its own, is not in it; context finds
+those.
+
+Arguments:
+  <id>                     The id of any message in the conversation.
+
+Flags:
+      --raw                Print every message whole, its quoted history included, instead of the
+                           transcript.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Examples:
+  mail-find thread 1a02340ea531858a
+  mail-find thread 1a02340ea531858a --raw
+
+JSON:
+  turns, oldest first, each with id, date, from, to, subject, said,
+  quoted_chars, fold_rejected and attachments (name, kind, inline); then
+  raw_chars, transcript_chars and folded_chars, the sizes before and after
+  folding. With --raw, messages instead, each with the envelope as search
+  prints it (id, conversation_id, message_id, date, from, to, cc, subject,
+  snippet), its whole body, and attachments as read prints them.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

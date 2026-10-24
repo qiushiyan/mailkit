@@ -1,0 +1,19 @@
+Usage: send-mail list
+
+List the 30 most recent drafts, newest first, with their state.
+
+Inherited flags:
+  -h, --help    Show context-sensitive help.
+
+States:
+  pending   written and not sent; commit sends it, and one never committed
+            is never sent
+  sending   a commit is under way; if none is, it died before recording the
+            outcome, and commit reports the draft as unknown
+  sent      sent once, with the time; it cannot be sent again
+  unknown   the provider may have accepted it and the result was lost
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

@@ -1,0 +1,64 @@
+Usage: mail-find read <id> [flags]
+
+Print one message: headers, the body with verified quoted history folded, and its attachments.
+
+Prints the message with its quoted history folded away, but only history
+that verifiably appears earlier in the same conversation, which read loads
+to check. A quote found nowhere earlier is kept whole, and fold_rejected
+says why. --raw prints the body without folding.
+
+The body is the HTML converted to text: a link reads "text ( URL )", a
+table's rows become lines, and a picture is only its marker,
+"[image] ( URL )" or its alt text. Most HTML mail carries its pictures as
+links rather than attachments, so when the question is what a picture
+shows, --fetch-remote downloads them and labels each: pixel (a tracking
+beacon), small (a logo, avatar or badge) or image, the one worth opening. A
+downloaded picture is a path; open it to see it. Fetching tells the sender
+the mail was opened, which is accepted when the picture bears on the
+question.
+
+Arguments:
+  <id>                     The message's id: the "id" field that search, resolve or thread prints.
+
+Flags:
+      --fetch-remote       Also download the pictures the body only links to, each labelled by size.
+                           Fetching tells the sender the mail was opened.
+      --out=DIR            Directory for the downloaded pictures, in place of the message's state
+                           directory.
+      --raw                Print the body as converted, quoted history included: for when a fold
+                           looks wrong, or the exact words are wanted.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Examples:
+  mail-find read 1a02340ea531858a
+  mail-find read 1a02340ea531858a --fetch-remote
+
+JSON:
+  The envelope as search prints it (id, conversation_id, message_id, date,
+  from, to, cc, subject, snippet), then:
+    body            the text, folded unless --raw
+    quoted_chars    how many characters of quoted history were folded
+    fold_rejected   why a detected quote was kept
+    attachments     every part: name, kind, handle, url, size, mime_type,
+                    inline, content_id, truncated; an embedded_message carries
+                    its text in embedded (from, to, date, subject, body,
+                    attachments)
+    remote_images   with --fetch-remote, each picture: url, path, size,
+                    width, height, kind, or error
+    next_steps
+
+Attachment kinds:
+  stored            a file or inline picture in the message; fetch downloads it
+  cloud_link        a OneDrive or Drive link; the bytes are at its url, which
+                    fetch does not follow
+  embedded_message  a whole mail attached as a mail; its text is in embedded
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

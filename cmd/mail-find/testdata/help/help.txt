@@ -1,0 +1,59 @@
+Usage: mail-find <command> [flags]
+
+mail-find searches, reads and downloads from mail history. Nothing here sends or changes mail.
+
+Reads the person's mail: find a message, read it, reassemble its
+conversation or everything about the same order, booking or tenancy, and
+download what is attached. Every command prints one JSON document; --text
+prints the form for people instead.
+
+An ID is the "id" field that search, resolve and thread print, and it
+belongs to the account it came from. A Message-ID (the RFC 822 header, or a
+message:// link dragged out of a mail client) is not an ID: resolve turns
+one into an ID.
+
+search, read, context and attachments results carry next_steps: runnable
+commands for what the tool saw but did not do, such as pictures it did not
+fetch, the conversation a message belongs to, or matches it held back. Run
+the ones that bear on the question.
+
+An error that says the account is not authenticated names the command that
+signs it in again. Signing in needs the person at the keyboard: relay the
+command to them rather than running it.
+
+Flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Commands:
+  search <query>      Find messages by sender, recipient, subject, date or phrase.
+  resolve <ref>       Turn a Message-ID, or a message:// link from a mail client, into the message's
+                      id.
+  read <id>           Print one message: headers, the body with verified quoted history folded, and
+                      its attachments.
+  thread <id>         Print the conversation a message belongs to as one transcript, each turn
+                      saying only what it added.
+  context <id>        Find messages about the same real-world thing across threads and senders; each
+                      hit says why.
+  attachments <id>    List a message's attachments and the pictures its body only links to.
+  fetch (--attachment=NAME | --all) <id>
+                      Download a message's attachments and print where each landed.
+  auth login          Sign in to --account interactively: a browser for Gmail, a device code for
+                      Outlook.
+  auth status         Print the address --account is signed in as, and the largest message it can
+                      send.
+
+Examples:
+  mail-find search 'from:taskrabbit.co.uk newer_than:30d'
+  mail-find read 1a02340ea531858a
+  mail-find thread 1a02340ea531858a
+  mail-find context 1a02367a18eae254
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run
+
+Run "mail-find <command> --help" for a command's details.

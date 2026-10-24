@@ -10,7 +10,7 @@ You are sending mail as the user: a new message, or a reply to one they
 received. Done is a draft the user has seen and approved, committed once,
 with the commit reporting it sent — for a reply, in the original's thread.
 
-Nothing leaves until `--commit`. Composing builds the exact message that
+Nothing leaves until `send-mail commit`. Composing builds the exact message that
 would go out, writes an HTML preview of it, and stops; a commit sends those
 bytes and nothing else, and a draft sends once.
 
@@ -25,7 +25,9 @@ Bodies are markdown by default: write naturally and the recipient gets a
 formatted mail (bold, lists, links, headings) with a plain-text alternative
 generated from the same source. A newline is a line break, so sign-offs and
 address blocks come out exactly as written. Prefer `--body-file` or stdin
-over inline `--body` for anything with backticks or `$`.
+over inline `--body` for anything with backticks or `$`, and for a body
+that starts with `-` (a list): inline, that one must be written
+`--body="- …"`.
 
 Two other formats, both explicit:
 
@@ -39,11 +41,11 @@ Two other formats, both explicit:
 ## Compose a new message
 
 ```sh
-send-mail --to alice@example.com --subject "Meter reading" --body "Taken on the 1st: **04512**."
-send-mail --to alice@example.com,bob@example.com --cc ops@example.com --bcc me@example.com \
+send-mail compose --to alice@example.com --subject "Meter reading" --body "Taken on the 1st: **04512**."
+send-mail compose --to alice@example.com,bob@example.com --cc ops@example.com --bcc me@example.com \
           --subject "Q3 numbers" --body-file note.md --attach report.pdf --attach data.csv
-send-mail --to alice@example.com --subject "Hi" --body-file - < note.md         # body from stdin
-send-mail --to alice@example.com --subject "Hi" --body "…" --sender me@alias.example   # send-as alias
+send-mail compose --to alice@example.com --subject "Hi" --body-file - < note.md         # body from stdin
+send-mail compose --to alice@example.com --subject "Hi" --body "…" --sender me@alias.example   # send-as alias
 ```
 
 `--account outlook` composes from the other mailbox.
@@ -56,13 +58,13 @@ that group by subject; Gmail files it as a conversation of its own, and a
 helpdesk cannot attach it to its ticket.
 
 ```sh
-send-mail --reply 1a10bfe41519179c --body-file reply.md                               # to the sender
-send-mail --reply-all 1a10bfe41519179c --cc lee@example.com --body-file reply.md      # to everyone on it, and Lee
+send-mail reply 1a10bfe41519179c --body-file reply.md                                # to the sender
+send-mail reply 1a10bfe41519179c --all --cc lee@example.com --body-file reply.md      # to everyone on it, and Lee
 ```
 
 `ID` is the `id` that `mail-find` returns, from the same `--account`. The
 reply goes to the original's sender — its Reply-To when it names one — and
-`--reply-all` adds everyone else on it except the user; `--cc` and `--bcc`
+`--all` adds everyone else on it except the user; `--cc` and `--bcc`
 add more. Choose reply-all only when the user means everyone on the original
 to read the answer. The `Re:` subject and the threading come from the
 original, so `--to` and `--subject` are refused with a reply: Gmail threads
@@ -85,12 +87,12 @@ flagged at compose time; send a share link instead of the file.
 Only after the user approves, commit the draft id that compose printed:
 
 ```sh
-send-mail --commit 20260822-115120-meter-reading-305f
+send-mail commit 20260822-115120-meter-reading-305f
 ```
 
 Changing anything means a new draft: an edited draft is refused because its
 bytes no longer match the preview, and a sent draft is refused a second
-time. `send-mail --list` shows recent drafts and their state.
+time. `send-mail list` shows recent drafts and their state.
 
 A reply's commit names the thread the provider put it in. When it warns
 that the reply landed in another conversation, or says the provider does

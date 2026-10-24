@@ -1,0 +1,20 @@
+Usage: mail-find auth <command> [flags]
+
+Sign in, or check which address an account is signed in as.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Commands:
+  login     Sign in to --account interactively: a browser for Gmail, a device code for Outlook.
+  status    Print the address --account is signed in as, and the largest message it can send.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run
+
+Run "mail-find auth <command> --help" for a command's details.

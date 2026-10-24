@@ -1,0 +1,42 @@
+Usage: mail-find fetch (--attachment=NAME | --all) <id> [flags]
+
+Download a message's attachments and print where each landed.
+
+Writes the chosen attachments to disk: into --out, or else the message's
+own directory under $XDG_STATE_HOME/mailkit/attachments/ (by default
+~/.local/state/mailkit/attachments/), never the working directory. Names
+are made safe for the disk, and two files that would collide get -2, -3.
+Only stored parts have bytes; for a cloud link or an embedded message fetch
+says there is nothing to download, and attachments shows what each holds.
+
+A downloaded file is a path, not yet read: open it to see what it says.
+
+Arguments:
+  <id>                     The message's id.
+
+Flags:
+      --attachment=NAME    Download the attachment with this name or handle. A name two attachments
+                           share needs its handle (repeatable).
+      --all                Download every attachment that has bytes in the message.
+      --out=DIR            Directory to write into, in place of the message's state directory.
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+      --account=ACCOUNT    Which account's mailbox to read. An id from one account means nothing in
+                           the other (default: gmail; one of: gmail, outlook).
+      --text               Print the human form instead of one JSON document.
+
+Constraints:
+  Exactly one of --attachment, --all.
+
+Examples:
+  mail-find fetch 1a01c98dd4e47691 --attachment report.pdf --attachment data.csv
+  mail-find fetch 1a01c98dd4e47691 --all --out ./downloads
+
+JSON:
+  saved, each file with name (as the mail gave it), path and size.
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

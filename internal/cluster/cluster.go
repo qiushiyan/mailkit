@@ -55,10 +55,11 @@ const (
 	DefaultLimit    = 40
 	DefaultMinScore = 2
 
-	weightIdentifier = 5
-	weightThread     = 3
-	weightDomain     = 2
-	weightSubject    = 1
+	// What each signal adds to a hit's score.
+	WeightIdentifier = 5
+	WeightThread     = 3
+	WeightDomain     = 2
+	WeightSubject    = 1
 )
 
 func plausible(m string) bool {
@@ -200,18 +201,18 @@ func Build(ctx context.Context, box mail.Mailbox, seedID string, o Options) (Res
 	after, before := seed.Received.Add(-window), seed.Received.Add(window)
 	var probes []probe
 	for _, k := range keys {
-		probes = append(probes, probe{mail.Criteria{Phrases: []string{k}}, "shares identifier " + k, weightIdentifier,
+		probes = append(probes, probe{mail.Criteria{Phrases: []string{k}}, "shares identifier " + k, WeightIdentifier,
 			max(o.Limit, TooCommon+1)})
 	}
 	if domain != "" {
 		probes = append(probes, probe{mail.Criteria{From: domain, After: after, Before: before},
-			"same sender domain (" + domain + ") within " + itoa(o.WindowDays) + " days", weightDomain, o.Limit})
+			"same sender domain (" + domain + ") within " + itoa(o.WindowDays) + " days", WeightDomain, o.Limit})
 	}
 	if len(tokens) > 0 {
 		// Bounded like the domain probe. Unbounded, "ikea OR assembly"
 		// matched a food-hall newsletter from three years earlier.
 		probes = append(probes, probe{mail.Criteria{SubjectTerms: tokens, After: after, Before: before},
-			"subject overlap: " + strings.Join(tokens, ", "), weightSubject, o.Limit})
+			"subject overlap: " + strings.Join(tokens, ", "), WeightSubject, o.Limit})
 	}
 
 	results := make([][]mail.Envelope, len(probes))
@@ -234,7 +235,7 @@ func Build(ctx context.Context, box mail.Mailbox, seedID string, o Options) (Res
 	var order []string
 	for i, p := range probes {
 		hits := results[i]
-		if p.weight == weightIdentifier && len(hits) > TooCommon && !o.Raw {
+		if p.weight == WeightIdentifier && len(hits) > TooCommon && !o.Raw {
 			r.DroppedAsTooCommon = append(r.DroppedAsTooCommon, Dropped{
 				Identifier: p.criteria.Phrases[0], Reason: p.reason, Hits: "more than " + itoa(TooCommon)})
 			continue
@@ -257,7 +258,7 @@ func Build(ctx context.Context, box mail.Mailbox, seedID string, o Options) (Res
 	for _, id := range order {
 		row := scored[id]
 		if row.ConversationID != "" && row.ConversationID == seed.ConversationID {
-			row.Score += weightThread
+			row.Score += WeightThread
 			row.Why = append(row.Why, "same conversation")
 		}
 	}

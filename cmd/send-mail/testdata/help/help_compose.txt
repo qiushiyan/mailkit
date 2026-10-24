@@ -1,0 +1,62 @@
+Usage: send-mail compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE) [flags]
+
+Write a draft of a new message and a preview of its exact bytes. Nothing is sent.
+
+Builds the message from the flags and the account; it goes out from the
+account's own address unless --sender names another. It writes the draft
+and an HTML preview, opens the preview in the browser unless --no-open,
+and prints, as labelled lines of text, the draft id, the account, the
+preview's path, its size, and the commit command. A message over the account's size limit is flagged here and
+refused at commit: send a share link instead of the file.
+
+Flags:
+  -t, --to=ADDRESS,...     Send to this address (required; repeatable).
+  -s, --subject=SUBJECT    The subject line (required).
+      --cc=ADDRESS,...     Also send a copy to this address (repeatable).
+      --bcc=ADDRESS,...    Send a blind copy to this address; the other recipients do not see it
+                           (repeatable).
+      --body=BODY          The body, inline. A body that starts with - must be written --body=TEXT;
+                           for anything long, or with backticks or $, prefer --body-file.
+      --body-file=FILE     Read the body from this file, or from stdin when it is -.
+      --format=FORMAT      How to read the body: markdown compiles to a plain-text and an HTML part
+                           that say the same thing; text sends the bytes verbatim; html sends
+                           finished HTML as it is (default: markdown; one of: markdown, text, html).
+      --attach=FILE        Attach this file (repeatable).
+      --sender=ADDRESS     Send as this alias or send-as address of the account instead of its own
+                           address.
+      --no-open            Write the preview without opening it in the browser, to show it to the
+                           person some other way.
+      --account=ACCOUNT    Which account to send from (default: gmail; one of: gmail, outlook).
+
+Inherited flags:
+  -h, --help               Show context-sensitive help.
+
+Constraints:
+  Exactly one of --body, --body-file.
+
+Body:
+  The body is markdown unless --format says otherwise: bold, lists, links and
+  headings come out formatted, with a plain-text part generated from the same
+  source, and a newline is a line break, so sign-offs keep their lines.
+  Markdown that cannot look the same in both parts is refused, naming the way
+  out: raw HTML (--format html for a finished HTML body, --format text for
+  the bytes as written), images (--attach the file), and links that are not
+  http, https or mailto. Use --format text for a body whose *, [ or # are
+  content, such as a pasted log: markdown would format them.
+
+Preview:
+  The preview is read back from the draft's bytes, so it shows what will go
+  out: the account, From, To, Cc, Bcc, the format and the size; the HTML part
+  as it renders, and the plain-text part; the attachments; and for a reply,
+  the message it answers. With --no-open, open the file for the person or
+  relay those to them.
+
+Examples:
+  send-mail compose --to alice@example.com --subject "Meter reading" --body "Taken on the 1st: **04512**."
+  send-mail compose --to alice@example.com,bob@example.com --cc ops@example.com --subject "Q3 numbers" --body-file note.md --attach report.pdf
+  send-mail compose --to alice@example.com --subject "Hi" --body-file - < note.md
+
+Exit codes:
+  0    success
+  1    failed
+  2    invalid arguments; nothing was run

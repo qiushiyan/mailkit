@@ -61,8 +61,8 @@ github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmd
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/qiushiyan/clikit v0.3.2 h1:ffmfRjAlXBXagK2Zxa/OYZxABNGzLYmNhDVxLlEk8Jk=
-github.com/qiushiyan/clikit v0.3.2/go.mod h1:qP674EhvYtK2eDEOwkLKZluw42Uku9SXXrDYYZGBdkI=
+github.com/qiushiyan/clikit v0.5.0 h1:S9KotrmoNthZXFEc45z19lG4JPhHGRTZdZTl2mApu5k=
+github.com/qiushiyan/clikit v0.5.0/go.mod h1:qP674EhvYtK2eDEOwkLKZluw42Uku9SXXrDYYZGBdkI=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

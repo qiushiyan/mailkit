@@ -7,7 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache v0.4.0
 	github.com/alecthomas/kong v1.16.1
-	github.com/qiushiyan/clikit v0.3.2
+	github.com/qiushiyan/clikit v0.5.0
 	github.com/wneessen/go-mail v0.8.1
 	github.com/yuin/goldmark v1.8.5
 	golang.org/x/net v0.58.0

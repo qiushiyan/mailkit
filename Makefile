@@ -1,17 +1,18 @@
-BINDIR := $(HOME)/.local/bin
+PREFIX ?= $(HOME)/.local
 CMDS := mail-find send-mail
 
-.PHONY: build install skills test test-live vet fmt fix check
+.PHONY: build install skills test test-live vet fmt fix check golden contract
 
 build:
 	go build ./...
 
-# Built beside the target and renamed into place: `go build -o` leaves a
-# window where the installed path is a partially written file, and agents
-# call these binaries by that path.
+# Built beside the target and renamed into place: agents call these
+# binaries by path and must never run a partly written file.
 install:
+	@mkdir -p "$(PREFIX)/bin"
 	@for c in $(CMDS); do \
-		go build -o $(BINDIR)/$$c.new ./cmd/$$c && mv -f $(BINDIR)/$$c.new $(BINDIR)/$$c || exit 1; \
+		tmp=$$(mktemp "$(PREFIX)/bin/$$c.XXXXXX") && \
+		{ go build -o "$$tmp" ./cmd/$$c && chmod 755 "$$tmp" && mv -f "$$tmp" "$(PREFIX)/bin/$$c"; } || { rm -f "$$tmp"; exit 1; }; \
 	done
 
 # The in-repo skills, made global: symlinked into the stow-managed dotfiles
@@ -42,3 +43,13 @@ fix:
 	@out=$$(go fix -diff ./...); if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 
 check: vet fix test
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
+
+# Rewrite the golden help pages after an intended change; review the diff.
+golden:
+	CLIKIT_UPDATE=1 go test ./cmd/... -run TestHelpPages
+
+# Re-record what callers read after an intended change to it; the diff is
+# a change every caller sees, so review it as one.
+contract:
+	MAILKIT_CONTRACT_UPDATE=1 go test ./cmd/... -run TestContracts

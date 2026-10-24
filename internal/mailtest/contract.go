@@ -6,7 +6,6 @@ package mailtest
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"mime"
 	"strings"
@@ -287,5 +286,3 @@ func head(b []byte) []byte {
 	}
 	return b
 }
-
-var _ = context.Background

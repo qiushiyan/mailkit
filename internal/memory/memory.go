@@ -14,7 +14,6 @@ import (
 	"mime/quotedprintable"
 	netmail "net/mail"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -115,7 +114,7 @@ func (m *Mailbox) Search(_ context.Context, c mail.Criteria, limit int) ([]mail.
 		}
 	}
 	// Newest first, like a provider listing.
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Received.After(out[j].Received) })
+	slices.SortStableFunc(out, func(a, b mail.Envelope) int { return b.Received.Compare(a.Received) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

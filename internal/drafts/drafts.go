@@ -32,7 +32,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +39,7 @@ import (
 	gomail "github.com/wneessen/go-mail"
 
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/render"
 )
 
 // State is where a draft is in its single life.
@@ -471,7 +471,7 @@ func (s Store) Commit(ctx context.Context, id string, open mail.Opener, now time
 	}
 	if prepared.Size() > acct.SendLimit {
 		return refuse(fmt.Errorf("message is %s, over the %s limit for %s; send a share link instead",
-			HumanSize(prepared.Size()), HumanSize(acct.SendLimit), rec.Account))
+			render.Size(prepared.Size()), render.Size(acct.SendLimit), rec.Account))
 	}
 	sent, sendErr := box.Send(ctx, prepared, rec.Parent())
 	rec, err = s.finish(rec, sent.ID, acct.Address, sendErr, now)
@@ -554,7 +554,8 @@ func (s Store) Recent(limit int) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(entries)))
+	slices.Sort(entries)
+	slices.Reverse(entries)
 	var out []Record
 	for _, p := range entries {
 		b, err := os.ReadFile(p)

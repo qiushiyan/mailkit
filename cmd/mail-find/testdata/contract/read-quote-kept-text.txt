@@ -1,0 +1,14 @@
+$ mail-find read unverified --text
+exit 0
+--- stdout
+Date      Sun, 09 Aug 2026 10:00:00 +0000
+From      a@example.com
+To        me@example.com
+Subject   Re: boiler
+
+See below.
+
+> The landlord agreed to replace the boiler before the fifteenth and will confirm by Friday.
+
+[quote kept: 100% of 1 quoted lines are not in earlier turns]
+--- stderr

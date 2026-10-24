@@ -87,12 +87,9 @@ func (f *Fetcher) FetchAll(ctx context.Context, urls []string, dir string) []Fet
 	out := make([]Fetched, 0, len(urls))
 	names := make([]string, 0, len(urls))
 	for _, u := range urls {
-		base := u
-		if i := strings.Index(base, "?"); i >= 0 {
-			base = base[:i]
-		}
-		if i := strings.LastIndex(base, "/"); i >= 0 {
-			base = base[i+1:]
+		base, _, _ := strings.Cut(u, "?")
+		if _, after, ok := strings.CutLast(base, "/"); ok {
+			base = after
 		}
 		if filepath.Ext(base) == "" {
 			base += ".bin"

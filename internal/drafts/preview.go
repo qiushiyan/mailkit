@@ -7,6 +7,8 @@ import (
 	"io"
 	"mime/quotedprintable"
 	"strings"
+
+	"github.com/qiushiyan/mailkit/internal/render"
 )
 
 func decode(cte string, r io.Reader) io.Reader {
@@ -17,17 +19,6 @@ func decode(cte string, r io.Reader) io.Reader {
 		return quotedprintable.NewReader(r)
 	}
 	return r
-}
-
-// HumanSize renders bytes for people.
-func HumanSize(n int64) string {
-	switch {
-	case n < 1024:
-		return fmt.Sprintf("%d B", n)
-	case n < 1024*1024:
-		return fmt.Sprintf("%.1f KB", float64(n)/1024)
-	}
-	return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
 }
 
 const previewCSS = `
@@ -67,7 +58,7 @@ func renderPreview(rec Record, p wire) string {
 		format = "HTML"
 	}
 	meta := row("Account", rec.Account) + row("From", p.From) + row("To", p.To) + row("Cc", p.Cc) +
-		row("Bcc", p.Bcc) + row("Format", format) + row("Size", HumanSize(rec.Size))
+		row("Bcc", p.Bcc) + row("Format", format) + row("Size", render.Size(rec.Size))
 
 	// What a reply answers is what the person approves it as answering, so
 	// it leads the page. The original's sender, subject and date come from
@@ -87,9 +78,9 @@ func renderPreview(rec Record, p wire) string {
 		var total int64
 		for _, a := range p.Attachments {
 			total += a.Size
-			fmt.Fprintf(&items, `<li><span>%s</span><span class="size">%s</span></li>`, e(a.Name), HumanSize(a.Size))
+			fmt.Fprintf(&items, `<li><span>%s</span><span class="size">%s</span></li>`, e(a.Name), render.Size(a.Size))
 		}
-		att = fmt.Sprintf(`<div class="card"><h2>Attachments &middot; %s total</h2><ul class="att">%s</ul></div>`, HumanSize(total), items.String())
+		att = fmt.Sprintf(`<div class="card"><h2>Attachments &middot; %s total</h2><ul class="att">%s</ul></div>`, render.Size(total), items.String())
 	}
 	// Rich bodies render inside a sandboxed iframe: the sandbox attribute
 	// (no tokens) blocks script and same-origin access, the CSP meta blocks

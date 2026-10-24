@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/qiushiyan/mailkit/internal/drafts"
+	"github.com/qiushiyan/mailkit/internal/render"
 )
 
 // SendMail builds the compose/commit command. Composing is always a dry
@@ -169,9 +170,9 @@ come from the original, so --to and --subject are refused with it.`,
 						a.printf("cc      %s\n", strings.Join(rec.Cc, ", "))
 					}
 				}
-				a.printf("preview %s\nsize    %s\n", rec.Preview, drafts.HumanSize(rec.Size))
+				a.printf("preview %s\nsize    %s\n", rec.Preview, render.Size(rec.Size))
 				if rec.Size > rec.SendLimit {
-					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", drafts.HumanSize(rec.Size), drafts.HumanSize(rec.SendLimit), a.account)
+					a.printf("warning: %s is over the %s limit for %s -- the send will be refused\n", render.Size(rec.Size), render.Size(rec.SendLimit), a.account)
 				}
 				a.printf("\nnothing has been sent. to send exactly this draft:\n    send-mail --commit %s\n", rec.ID)
 				return nil

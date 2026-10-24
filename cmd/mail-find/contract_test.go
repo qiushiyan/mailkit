@@ -60,6 +60,8 @@ func TestContracts(t *testing.T) {
 		{"read-remote-only", []string{"read", fixtures.RemoteOnly}},
 		{"read-fetch-remote", []string{"read", "pics", "--fetch-remote"}},
 		{"read-fetch-remote-text", []string{"read", "pics", "--fetch-remote", "--text", "--out", w.dir + "/pics"}},
+		{"read-quote-kept", []string{"read", "unverified"}},
+		{"read-quote-kept-text", []string{"read", "unverified", "--text"}},
 		{"read-embedded", []string{"read", "kinds"}},
 		{"read-embedded-text", []string{"read", "kinds", "--text"}},
 		{"read-not-found", []string{"read", "nope"}},
@@ -186,7 +188,9 @@ func newContractWorld(t *testing.T) *contractWorld {
 		{Name: "report.pdf", MIME: "application/pdf", Size: 7, Content: mail.StoredPart{Handle: "h3"}},
 	}
 	files.HasAttachments = true
-	msgs = append(msgs, invoice, ref, kinds, files)
+	unverified := msg("unverified", "c-unverified", day(8), "a@example.com", "Re: boiler",
+		"<p>See below.</p><blockquote><p>The landlord agreed to replace the boiler before the fifteenth and will confirm by Friday.</p></blockquote>")
+	msgs = append(msgs, invoice, ref, kinds, files, unverified)
 
 	w.box = memory.New(msgs...)
 	w.box.TextOf = func(m mail.Message) string { return render.Text(m.Body) }

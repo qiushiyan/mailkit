@@ -355,7 +355,7 @@ func (a *app) readCmd() *cobra.Command {
 				if p.Kind != "stored" {
 					tag += " [" + p.Kind + "]"
 				}
-				a.printf("%-9s %s (%s)%s\n", "Attach", p.Name, drafts.HumanSize(p.Size), tag)
+				a.printf("%-9s %s (%s)%s\n", "Attach", p.Name, render.Size(p.Size), tag)
 				if e := p.Embedded; e != nil {
 					a.printf("\n--- embedded message: %s\n    From: %s\n    Date: %s\n    Subject: %s\n\n%s\n--- end embedded message\n", p.Name, e.From, e.Date, e.Subject, e.Body)
 				}
@@ -582,7 +582,7 @@ func (a *app) attachmentsCmd() *cobra.Command {
 				if p.Kind != "stored" {
 					tag += "  [" + p.Kind + ": no bytes in the message]"
 				}
-				a.printf("%s  %s  %s%s\n", p.Name, drafts.HumanSize(p.Size), p.MIME, tag)
+				a.printf("%s  %s  %s%s\n", p.Name, render.Size(p.Size), p.MIME, tag)
 			}
 			for _, s := range steps {
 				a.printf("\n%s\n", s)
@@ -635,7 +635,7 @@ func (a *app) fetchCmd() *cobra.Command {
 				return a.emit(map[string]any{"saved": out})
 			}
 			for _, s := range out {
-				a.printf("%s  (%s)\n", s.Path, drafts.HumanSize(s.Size))
+				a.printf("%s  (%s)\n", s.Path, render.Size(s.Size))
 			}
 			return nil
 		},
@@ -676,7 +676,7 @@ func (a *app) authCmd() *cobra.Command {
 			if !a.text {
 				return a.emit(map[string]any{"account": a.account, "address": acct.Address, "send_limit": acct.SendLimit})
 			}
-			a.printf("%s: %s (send limit %s)\n", a.account, acct.Address, drafts.HumanSize(acct.SendLimit))
+			a.printf("%s: %s (send limit %s)\n", a.account, acct.Address, render.Size(acct.SendLimit))
 			return nil
 		},
 	})

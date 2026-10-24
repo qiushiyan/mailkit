@@ -1,0 +1,5 @@
+$ mail-find read unverified
+exit 0
+--- stdout
+{"id":"unverified","conversation_id":"c-unverified","message_id":"unverified@test","date":"Sun, 09 Aug 2026 10:00:00 +0000","from":"a@example.com","to":"me@example.com","subject":"Re: boiler","body":"See below.\n\n> The landlord agreed to replace the boiler before the fifteenth and will confirm by Friday.","quoted_chars":0,"fold_rejected":"kept: 100% of 1 quoted lines are not in earlier turns","attachments":[],"next_steps":[]}
+--- stderr

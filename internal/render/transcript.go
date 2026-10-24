@@ -77,7 +77,7 @@ func FoldOne(body, pool, providerFolded string) (said string, f Fold) {
 	ratio, n := Coverage(quoted, pool)
 	if ratio < FoldCoverage {
 		return Tidy(body), Fold{QuoteMarker: marker,
-			FoldRejected: fmt.Sprintf("kept: %d%% of %d quoted lines are not in earlier turns", int(ratio*100), n)}
+			FoldRejected: fmt.Sprintf("kept: %d%% of %d quoted lines are not in earlier turns", int((1-ratio)*100), n)}
 	}
 	return Tidy(spoken), Fold{QuotedChars: len(quoted), QuoteMarker: marker}
 }

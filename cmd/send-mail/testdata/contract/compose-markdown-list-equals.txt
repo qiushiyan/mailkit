@@ -1,0 +1,12 @@
+$ send-mail compose --to a@example.com --subject groceries '--body=- milk
+- eggs' --no-open
+exit 0
+--- stdout
+draft   20260822-120000-groceries-XXXX
+account gmail (me@example.com)
+preview $TMP/state/drafts/20260822-120000-groceries-XXXX.html
+size    719 B
+
+nothing has been sent. to send exactly this draft:
+    send-mail commit 20260822-120000-groceries-XXXX
+--- stderr

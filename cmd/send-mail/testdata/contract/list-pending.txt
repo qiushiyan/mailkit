@@ -1,4 +1,4 @@
-$ send-mail --list
+$ send-mail list
 exit 0
 --- stdout
 20260822-120000-invoice-august-XXXX                      gmail    pending                -> a@example.com, b@example.com

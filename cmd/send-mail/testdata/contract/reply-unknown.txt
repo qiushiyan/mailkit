@@ -1,5 +1,5 @@
-$ send-mail --reply nope --body hi --no-open
+$ send-mail reply nope --body hi --no-open
 exit 1
 --- stdout
 --- stderr
-send-mail: message nope: not found
+send-mail: error: message nope: not found

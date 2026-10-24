@@ -1,5 +1,7 @@
 $ send-mail
-exit 1
+exit 2
 --- stdout
 --- stderr
-send-mail: nothing to do: compose with --to/--subject/--body, reply with --reply ID, send a draft with --commit DRAFT-ID, or --list
+send-mail: error: expected one of "compose", "reply", "commit", "list"
+Usage: send-mail <command>
+Run "send-mail --help" for details.

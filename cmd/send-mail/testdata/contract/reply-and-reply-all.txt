@@ -1,5 +1,0 @@
-$ send-mail --reply liam --reply-all liam --body hi
-exit 1
---- stdout
---- stderr
-send-mail: --reply and --reply-all answer one message two ways; use one

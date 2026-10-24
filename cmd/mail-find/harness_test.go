@@ -1,14 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
-	"github.com/qiushiyan/mailkit/internal/cli"
+	"github.com/alecthomas/kong"
+	"github.com/qiushiyan/clikit"
+	"github.com/qiushiyan/clikit/clikittest"
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/images"
 	"github.com/qiushiyan/mailkit/internal/mail"
@@ -51,7 +53,7 @@ func (h *harness) open(ctx context.Context, account string) (mail.Mailbox, error
 	return h.box, nil
 }
 
-func login(ctx context.Context, account string, out func(string)) error {
+func fakeLogin(ctx context.Context, account string, out func(string)) error {
 	out("logged in " + account)
 	return nil
 }
@@ -62,16 +64,25 @@ type result struct {
 	stderr string
 }
 
+// app is the production App with the harness's stand-ins bound over the
+// real ones: Kong keeps one binding per type, and the later one wins.
+func (h *harness) app() clikit.App {
+	a := app
+	a.Options = append(slices.Clone(app.Options),
+		kong.BindTo(h.t.Context(), (*context.Context)(nil)),
+		kong.Bind(mail.Opener(h.open)),
+		kong.Bind(h.dirs),
+		kong.Bind(clock(func() time.Time { return now })),
+		kong.Bind(h.images),
+		kong.Bind(login(fakeLogin)),
+	)
+	return a
+}
+
 func (h *harness) find(args ...string) result {
 	h.t.Helper()
-	var out, errOut bytes.Buffer
-	root := cli.MailFind(cli.Deps{
-		Open: h.open, Login: login, Images: h.images, AttachmentDir: h.dirs.Attachments,
-		Now: func() time.Time { return now }, Accounts: []string{"gmail", "outlook"},
-	}, &out, &errOut)
-	root.SetContext(h.t.Context())
-	code := cli.Run(root, args, &errOut)
-	return result{code, out.String(), errOut.String()}
+	r := clikittest.Run(h.app(), args...)
+	return result{r.Code, r.Stdout, r.Stderr}
 }
 
 func (r result) json(t *testing.T) map[string]any {

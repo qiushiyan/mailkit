@@ -25,7 +25,7 @@ import (
 
 // The send gate's promise: the bytes reviewed are the bytes sent, once.
 
-var draftIDRe = regexp.MustCompile(`send-mail --commit (\S+)`)
+var draftIDRe = regexp.MustCompile(`send-mail commit (\S+)`)
 
 func draftIDOf(t *testing.T, r result) string {
 	t.Helper()
@@ -74,7 +74,7 @@ func parts(t *testing.T, p *mail.Prepared) (hdr netmail.Header, body string, att
 func TestSend_CommitSendsExactlyTheReviewedBytes(t *testing.T) {
 	h := newHarness(t)
 	pdf := writeFile(t, "invoice.pdf", bytes.Repeat([]byte("PDF"), 5000))
-	r := mustOK(t, h.send("--to", "a@example.com,b@example.com", "--cc", "c@example.com", "--bcc", "d@example.com",
+	r := mustOK(t, h.send("compose", "--to", "a@example.com,b@example.com", "--cc", "c@example.com", "--bcc", "d@example.com",
 		"--subject", "Invoice — August", "--body", "Please find the invoice attached.\n\nThanks", "--attach", pdf, "--no-open"))
 	id := draftIDOf(t, r)
 	if len(h.box.Sent) != 0 {
@@ -85,7 +85,7 @@ func TestSend_CommitSendsExactlyTheReviewedBytes(t *testing.T) {
 		t.Fatalf("draft has no .eml on disk: %v", err)
 	}
 
-	mustOK(t, h.send("--commit", id))
+	mustOK(t, h.send("commit", id))
 	if len(h.box.Sent) != 1 {
 		t.Fatalf("sent %d messages, want 1", len(h.box.Sent))
 	}
@@ -122,9 +122,9 @@ func TestSend_CommitSendsExactlyTheReviewedBytes(t *testing.T) {
 
 func TestSend_DraftIsSingleUse(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "once", "--body", "hello there", "--no-open")))
-	mustOK(t, h.send("--commit", id))
-	r := mustFail(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "once", "--body", "hello there", "--no-open")))
+	mustOK(t, h.send("commit", id))
+	r := mustFail(t, h.send("commit", id))
 	if !strings.Contains(r.stderr, "single-use") {
 		t.Errorf("second commit must be refused as single-use: %s", r.stderr)
 	}
@@ -135,13 +135,13 @@ func TestSend_DraftIsSingleUse(t *testing.T) {
 
 func TestSend_ConcurrentCommitsSendOnce(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "race", "--body", "hello there", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "race", "--body", "hello there", "--no-open")))
 	var wg sync.WaitGroup
 	ok := 0
 	var mu sync.Mutex
 	for range 8 {
 		wg.Go(func() {
-			if r := h.send("--commit", id); r.code == 0 {
+			if r := h.send("commit", id); r.code == 0 {
 				mu.Lock()
 				ok++
 				mu.Unlock()
@@ -156,11 +156,11 @@ func TestSend_ConcurrentCommitsSendOnce(t *testing.T) {
 
 func TestSend_EditedDraftIsRefused(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "edit", "--body", "original body", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "edit", "--body", "original body", "--no-open")))
 	eml := filepath.Join(h.drafts().Dir, id+".eml")
 	b, _ := os.ReadFile(eml)
 	os.WriteFile(eml, bytes.Replace(b, []byte("original"), []byte("tampered"), 1), 0o600)
-	r := mustFail(t, h.send("--commit", id))
+	r := mustFail(t, h.send("commit", id))
 	if !strings.Contains(r.stderr, "re-draft") {
 		t.Errorf("a changed message must be refused and tell the user to re-draft: %s", r.stderr)
 	}
@@ -173,12 +173,12 @@ func TestSend_OverLimitIsRefusedOnPreparedBytes(t *testing.T) {
 	h := newHarness(t)
 	h.box.SendLimit = 10 << 10
 	big := writeFile(t, "big.bin", bytes.Repeat([]byte{1}, 9<<10)) // under the limit raw, over it once base64 expands
-	r := mustOK(t, h.send("--to", "a@example.com", "--subject", "big", "--body", "see attached", "--attach", big, "--no-open"))
+	r := mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "big", "--body", "see attached", "--attach", big, "--no-open"))
 	if !strings.Contains(r.stdout, "over the") {
 		t.Errorf("compose should warn that the prepared message exceeds the limit:\n%s", r.stdout)
 	}
 	id := draftIDOf(t, r)
-	rr := mustFail(t, h.send("--commit", id))
+	rr := mustFail(t, h.send("commit", id))
 	if !strings.Contains(rr.stderr, "limit") {
 		t.Errorf("commit must refuse on the limit: %s", rr.stderr)
 	}
@@ -190,8 +190,8 @@ func TestSend_OverLimitIsRefusedOnPreparedBytes(t *testing.T) {
 func TestSend_BodyFromStdinAndHTML(t *testing.T) {
 	h := newHarness(t)
 	h.stdin = "<p>Hello <b>there</b></p>"
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "html", "--body-file", "-", "--format", "html", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "html", "--body-file", "-", "--format", "html", "--no-open")))
+	mustOK(t, h.send("commit", id))
 	hdr, body, _ := parts(t, h.box.Sent[0])
 	if !strings.Contains(hdr.Get("Content-Type"), "text/html") {
 		t.Errorf("HTML body should be sent as text/html: %q", hdr.Get("Content-Type"))
@@ -269,8 +269,8 @@ func decodeCTE(cte string, r io.Reader) io.Reader {
 func TestSend_MarkdownIsTheDefaultAndCompilesToAlternative(t *testing.T) {
 	h := newHarness(t)
 	h.stdin = "Hi **team**,\n\n- first\n- second\n\nsee [the plan](https://example.com/plan)\n\nBest,\nQiushi\n"
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "plan", "--body-file", "-", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "plan", "--body-file", "-", "--no-open")))
+	mustOK(t, h.send("commit", id))
 	root := mimeTree(t, h.box.Sent[0])
 	if root.mediaType != "multipart/alternative" {
 		t.Fatalf("root is %s, want multipart/alternative", root.mediaType)
@@ -300,8 +300,8 @@ func TestSend_MarkdownIsTheDefaultAndCompilesToAlternative(t *testing.T) {
 func TestSend_MarkdownWithAttachmentNestsAlternativeUnderMixed(t *testing.T) {
 	h := newHarness(t)
 	pdf := writeFile(t, "invoice.pdf", []byte("%PDF fake"))
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "mixed", "--body", "see **attached**", "--format", "markdown", "--attach", pdf, "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "mixed", "--body", "see **attached**", "--format", "markdown", "--attach", pdf, "--no-open")))
+	mustOK(t, h.send("commit", id))
 	root := mimeTree(t, h.box.Sent[0])
 	if root.mediaType != "multipart/mixed" || len(root.children) != 2 {
 		t.Fatalf("root is %s with %d children, want multipart/mixed with 2", root.mediaType, len(root.children))
@@ -317,12 +317,12 @@ func TestSend_MarkdownWithAttachmentNestsAlternativeUnderMixed(t *testing.T) {
 
 func TestSend_MarkdownRefusalNamesTheConstruct(t *testing.T) {
 	h := newHarness(t)
-	r := mustFail(t, h.send("--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--no-open"))
+	r := mustFail(t, h.send("compose", "--to", "a@example.com", "--subject", "img", "--body", "![shot](https://example.com/x.png)", "--no-open"))
 	if !strings.Contains(r.stderr, "image") || !strings.Contains(r.stderr, "--attach") {
 		t.Errorf("image refusal must name the construct and the alternative: %s", r.stderr)
 	}
 	// Pasted content that trips the compiler must be pointed at the escape.
-	r = mustFail(t, h.send("--to", "a@example.com", "--subject", "log", "--body", "the error was <div>boom</div>", "--no-open"))
+	r = mustFail(t, h.send("compose", "--to", "a@example.com", "--subject", "log", "--body", "the error was <div>boom</div>", "--no-open"))
 	if !strings.Contains(r.stderr, "--format text") {
 		t.Errorf("raw-HTML refusal must name --format text as the way to send verbatim: %s", r.stderr)
 	}
@@ -336,8 +336,8 @@ func TestSend_MarkdownRefusalNamesTheConstruct(t *testing.T) {
 func TestSend_FormatTextSendsBytesVerbatim(t *testing.T) {
 	h := newHarness(t)
 	body := "keep **stars**, [brackets](x) and <angles> as they are"
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "verbatim", "--body", body, "--format", "text", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "verbatim", "--body", body, "--format", "text", "--no-open")))
+	mustOK(t, h.send("commit", id))
 	root := mimeTree(t, h.box.Sent[0])
 	if root.mediaType != "text/plain" || len(root.children) != 0 {
 		t.Fatalf("text format must send a single text/plain part, got %s with %d children", root.mediaType, len(root.children))
@@ -347,26 +347,30 @@ func TestSend_FormatTextSendsBytesVerbatim(t *testing.T) {
 	}
 }
 
+// Each command takes only what it uses, so a flag that would not change the
+// send is refused before anything happens, never silently ignored: a caller
+// can never believe an unread flag changed what went out.
 func TestSend_FlagAndModeConflictsAreRefused(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "modes", "--body", "hello there", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "modes", "--body", "hello there", "--no-open")))
 	for name, tc := range map[string]struct {
 		args []string
 		want string
 	}{
-		"unknown format":             {[]string{"--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, "text, html, or markdown"},
-		"commit with compose":        {[]string{"--commit", id, "--subject", "changed"}, "--subject"},
-		"commit with account":        {[]string{"--commit", id, "--account", "outlook"}, "--account"},
-		"commit with no-open":        {[]string{"--commit", id, "--no-open"}, "--no-open"},
-		"commit with list":           {[]string{"--commit", id, "--list"}, "different modes"},
-		"list with compose":          {[]string{"--list", "--to", "a@example.com"}, "--to"},
-		"two sources for body":       {[]string{"--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "use one"},
-		"two sources, one set empty": {[]string{"--to", "a@example.com", "--subject", "x", "--body", "", "--body-file", "b"}, "use one"},
+		"unknown format":             {[]string{"compose", "--to", "a@example.com", "--subject", "x", "--body", "hi", "--format", "rtf"}, `"markdown","text","html"`},
+		"commit with compose":        {[]string{"commit", id, "--subject", "changed"}, "--subject"},
+		"commit with account":        {[]string{"commit", id, "--account", "outlook"}, "--account"},
+		"commit with no-open":        {[]string{"commit", id, "--no-open"}, "--no-open"},
+		"commit with list":           {[]string{"commit", id, "list"}, "unexpected argument list"},
+		"list with compose":          {[]string{"list", "--to", "a@example.com"}, "--to"},
+		"two sources for body":       {[]string{"compose", "--to", "a@example.com", "--subject", "x", "--body", "a", "--body-file", "b"}, "--body and --body-file"},
+		"two sources, one set empty": {[]string{"compose", "--to", "a@example.com", "--subject", "x", "--body", "", "--body-file", "b"}, "--body and --body-file"},
+		"empty subject":              {[]string{"compose", "--to", "a@example.com", "--subject", " ", "--body", "hi"}, "--subject"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := mustFail(t, h.send(tc.args...))
-			if !strings.Contains(r.stderr, tc.want) {
-				t.Errorf("refusal must mention %q: %s", tc.want, r.stderr)
+			if !strings.Contains(r.stderr, tc.want) || r.code != 2 {
+				t.Errorf("refusal must be a usage error mentioning %q; exit %d: %s", tc.want, r.code, r.stderr)
 			}
 		})
 	}
@@ -377,13 +381,13 @@ func TestSend_FlagAndModeConflictsAreRefused(t *testing.T) {
 
 func TestSend_ListShowsState(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "listed", "--body", "hello there", "--no-open")))
-	r := mustOK(t, h.send("--list"))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "listed", "--body", "hello there", "--no-open")))
+	r := mustOK(t, h.send("list"))
 	if !strings.Contains(r.stdout, id) || !strings.Contains(r.stdout, "pending") {
 		t.Errorf("list should show the pending draft:\n%s", r.stdout)
 	}
-	mustOK(t, h.send("--commit", id))
-	if r := mustOK(t, h.send("--list")); !strings.Contains(r.stdout, "sent") {
+	mustOK(t, h.send("commit", id))
+	if r := mustOK(t, h.send("list")); !strings.Contains(r.stdout, "sent") {
 		t.Errorf("list should show it sent:\n%s", r.stdout)
 	}
 }
@@ -407,7 +411,7 @@ func ticket() (ask, answer mail.Message) {
 func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
-	r := mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me, thanks.", "--no-open"))
+	r := mustOK(t, h.send("reply", "liam", "--body", "The refund works for me, thanks.", "--no-open"))
 	for _, want := range []string{"answers Liam <liam@vendor.example>", `"Re: Refund request"`, "to      liam@vendor.example"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("compose output must say what the reply answers and who it goes to; lacks %q:\n%s", want, r.stdout)
@@ -435,7 +439,7 @@ func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testin
 		t.Error("the provider thread id travels on the send call, never in the message")
 	}
 
-	c := mustOK(t, h.send("--commit", id))
+	c := mustOK(t, h.send("commit", id))
 	if len(h.box.Sent) != 1 || !bytes.Equal(h.box.Sent[0].Bytes(), eml) {
 		t.Fatal("bytes sent differ from the .eml that was previewed")
 	}
@@ -449,7 +453,7 @@ func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testin
 	if hdr.Get("In-Reply-To") != "<CALag-refund@mail.example>" || hdr.Get("References") != "<ask@mail.example> <CALag-refund@mail.example>" {
 		t.Errorf("threading headers: In-Reply-To %q References %q", hdr.Get("In-Reply-To"), hdr.Get("References"))
 	}
-	if r := mustFail(t, h.send("--commit", id)); !strings.Contains(r.stderr, "single-use") {
+	if r := mustFail(t, h.send("commit", id)); !strings.Contains(r.stderr, "single-use") {
 		t.Errorf("a sent reply is single-use like any draft: %s", r.stderr)
 	}
 }
@@ -457,8 +461,8 @@ func TestSend_ReplyRoundTripSendsTheReviewedBytesIntoTheReviewedThread(t *testin
 func TestSend_ReplyAllAddsEveryoneButMeAndCcAddsMore(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
-	id := draftIDOf(t, mustOK(t, h.send("--reply-all", "liam", "--cc", "boss@example.com", "--body", "Refund, please.", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("reply", "liam", "--all", "--cc", "boss@example.com", "--body", "Refund, please.", "--no-open")))
+	mustOK(t, h.send("commit", id))
 	hdr, _, _ := parts(t, h.box.Sent[0])
 	if to := hdr.Get("To"); !strings.Contains(to, "liam@vendor.example") || strings.Contains(to, "me@example.com") {
 		t.Errorf("To = %q", to)
@@ -469,6 +473,8 @@ func TestSend_ReplyAllAddsEveryoneButMeAndCcAddsMore(t *testing.T) {
 	}
 }
 
+// A reply is addressed and titled by what it answers: reply has no --to
+// and no --subject, and its page says why.
 func TestSend_ReplyRefusesWhatWouldReaddressOrRetitleIt(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
@@ -476,12 +482,10 @@ func TestSend_ReplyRefusesWhatWouldReaddressOrRetitleIt(t *testing.T) {
 		args []string
 		want string
 	}{
-		"to with reply":        {[]string{"--reply", "liam", "--to", "x@example.com", "--body", "hi"}, "--cc"},
-		"subject with reply":   {[]string{"--reply", "liam", "--subject", "Keys", "--body", "hi"}, "subjects match"},
-		"reply and reply-all":  {[]string{"--reply", "liam", "--reply-all", "liam", "--body", "hi"}, "use one"},
-		"commit with reply":    {[]string{"--commit", "x", "--reply", "liam"}, "--reply"},
-		"unknown original":     {[]string{"--reply", "nope", "--body", "hi"}, "not found"},
-		"original without ids": {[]string{"--reply", "noid", "--body", "hi"}, "Message-ID"},
+		"to with reply":        {[]string{"reply", "liam", "--to", "x@example.com", "--body", "hi"}, "unknown flag --to"},
+		"subject with reply":   {[]string{"reply", "liam", "--subject", "Keys", "--body", "hi"}, "unknown flag --subject"},
+		"unknown original":     {[]string{"reply", "nope", "--body", "hi"}, "not found"},
+		"original without ids": {[]string{"reply", "noid", "--body", "hi"}, "Message-ID"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "original without ids" {
@@ -505,11 +509,11 @@ func TestSend_ReplyRefusesWhatWouldReaddressOrRetitleIt(t *testing.T) {
 func TestSend_ReplyWhoseRecordNamesAnotherOriginalIsRefused(t *testing.T) {
 	ask, answer := ticket()
 	h := newHarness(t, ask, answer)
-	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("reply", "liam", "--body", "The refund works for me.", "--no-open")))
 	path := filepath.Join(h.drafts().Dir, id+".json")
 	b, _ := os.ReadFile(path)
 	os.WriteFile(path, bytes.Replace(b, []byte("CALag-refund@mail.example"), []byte("ask@mail.example"), 1), 0o600)
-	if r := mustFail(t, h.send("--commit", id)); !strings.Contains(r.stderr, "re-draft") {
+	if r := mustFail(t, h.send("commit", id)); !strings.Contains(r.stderr, "re-draft") {
 		t.Errorf("a record that disagrees with its bytes must be refused: %s", r.stderr)
 	}
 	if len(h.box.Sent) != 0 {
@@ -549,8 +553,8 @@ func TestSend_CommitSaysWhereTheProviderPutTheReply(t *testing.T) {
 			ask, answer := ticket()
 			h := newHarness(t, ask, answer)
 			h.open = func(context.Context, string) (mail.Mailbox, error) { return placing{h.box, tc.conv, nil}, nil }
-			id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
-			r := mustOK(t, h.send("--commit", id))
+			id := draftIDOf(t, mustOK(t, h.send("reply", "liam", "--body", "The refund works for me.", "--no-open")))
+			r := mustOK(t, h.send("commit", id))
 			for _, want := range tc.want {
 				if !strings.Contains(r.stdout, want) {
 					t.Errorf("commit output lacks %q:\n%s", want, r.stdout)
@@ -568,8 +572,8 @@ func TestSend_ReplyRefusedBeforeTransmissionReturnsToPending(t *testing.T) {
 	h.open = func(context.Context, string) (mail.Mailbox, error) {
 		return placing{h.box, "", fmt.Errorf("%w: recipients differ", mail.ErrNotSent)}, nil
 	}
-	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me.", "--no-open")))
-	mustFail(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("reply", "liam", "--body", "The refund works for me.", "--no-open")))
+	mustFail(t, h.send("commit", id))
 	if rec, _ := h.drafts().Load(id); rec.State != drafts.Pending {
 		t.Errorf("a refusal before transmission must leave the draft pending, got %s", rec.State)
 	}

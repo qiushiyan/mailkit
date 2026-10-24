@@ -1,5 +1,7 @@
-$ send-mail --commit 20260822-120000-flaky-XXXX --account outlook
-exit 1
+$ send-mail commit 20260822-120000-flaky-XXXX --account outlook
+exit 2
 --- stdout
 --- stderr
-send-mail: --commit sends the draft exactly as previewed and takes no other flags; drop --account
+send-mail: error: unknown flag --account
+Usage: send-mail commit <draft-id>
+Run "send-mail commit --help" for details.

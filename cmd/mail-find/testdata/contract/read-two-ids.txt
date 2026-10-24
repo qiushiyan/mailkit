@@ -1,5 +1,7 @@
-$ mail-find read lunch order
-exit 1
+$ mail-find read lunch restock
+exit 2
 --- stdout
 --- stderr
-mail-find read: accepts 1 arg(s), received 2
+mail-find: error: unexpected argument restock
+Usage: mail-find read <id> [flags]
+Run "mail-find read --help" for details.

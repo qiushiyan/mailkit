@@ -1,5 +1,7 @@
 $ mail-find search lunch --account yahoo
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find search: unknown account "yahoo"; pick one of gmail, outlook
+mail-find: error: --account must be one of "gmail","outlook" but got "yahoo"
+Usage: mail-find search <query> [flags]
+Run "mail-find search --help" for details.

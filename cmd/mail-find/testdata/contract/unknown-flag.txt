@@ -1,5 +1,7 @@
 $ mail-find read lunch --bogus
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find read: unknown flag: --bogus
+mail-find: error: unknown flag --bogus
+Usage: mail-find read <id> [flags]
+Run "mail-find read --help" for details.

@@ -1,5 +1,7 @@
-$ send-mail --reply liam --to x@example.com --body hi
-exit 1
+$ send-mail reply liam --to x@example.com --body hi
+exit 2
 --- stdout
 --- stderr
-send-mail: a reply goes to the original's sender (--reply-all: everyone on it); drop --to, and add other people with --cc
+send-mail: error: unknown flag --to, did you mean "--cc"?
+Usage: send-mail reply (--body=BODY | --body-file=FILE) <id> [flags]
+Run "send-mail reply --help" for details.

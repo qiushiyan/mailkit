@@ -1,5 +1,7 @@
-$ send-mail --to a@example.com --subject x --body hi --format rtf
-exit 1
+$ send-mail compose --to a@example.com --subject x --body hi --format rtf
+exit 2
 --- stdout
 --- stderr
-send-mail: --format must be text, html, or markdown; got "rtf"
+send-mail: error: --format must be one of "markdown","text","html" but got "rtf"
+Usage: send-mail compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE) [flags]
+Run "send-mail compose --help" for details.

@@ -1,5 +1,5 @@
-$ send-mail --commit 20260822-120000-invoice-august-XXXX
+$ send-mail commit 20260822-120000-invoice-august-XXXX
 exit 1
 --- stdout
 --- stderr
-send-mail: draft 20260822-120000-invoice-august-XXXX already sent at 2026-08-22T12:00:00Z; drafts are single-use
+send-mail: error: draft 20260822-120000-invoice-august-XXXX already sent at 2026-08-22T12:00:00Z; drafts are single-use

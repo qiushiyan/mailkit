@@ -1,5 +1,7 @@
-$ send-mail --subject x --body hi --no-open
-exit 1
+$ send-mail compose --subject x --body hi --no-open
+exit 2
 --- stdout
 --- stderr
-send-mail: at least one --to recipient is required
+send-mail: error: missing flags: --to=ADDRESS,...
+Usage: send-mail compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE) [flags]
+Run "send-mail compose --help" for details.

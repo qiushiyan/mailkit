@@ -1,4 +1,4 @@
-$ send-mail -t 'a@example.com, b@example.com' -s Spaced --body 'hello there' --no-open
+$ send-mail compose -t 'a@example.com, b@example.com' -s Spaced --body 'hello there' --no-open
 exit 0
 --- stdout
 draft   20260822-120000-spaced-XXXX
@@ -7,5 +7,5 @@ preview $TMP/state/drafts/20260822-120000-spaced-XXXX.html
 size    704 B
 
 nothing has been sent. to send exactly this draft:
-    send-mail --commit 20260822-120000-spaced-XXXX
+    send-mail commit 20260822-120000-spaced-XXXX
 --- stderr

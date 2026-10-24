@@ -95,7 +95,7 @@ func TestContracts(t *testing.T) {
 		{"bare", nil},
 		{"unknown-command", []string{"bogus"}},
 		{"read-no-id", []string{"read"}},
-		{"read-two-ids", []string{"read", "lunch", "order"}},
+		{"read-two-ids", []string{"read", "lunch", "restock"}},
 		{"unknown-flag", []string{"read", "lunch", "--bogus"}},
 	}
 	var names []string

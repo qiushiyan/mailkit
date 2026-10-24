@@ -1,4 +1,4 @@
-$ send-mail --reply-all liam --cc boss@example.com --body 'Refund, please.' --no-open
+$ send-mail reply liam --all --cc boss@example.com --body 'Refund, please.' --no-open
 exit 0
 --- stdout
 draft   20260822-120000-re-refund-request-XXXX
@@ -10,5 +10,5 @@ preview $TMP/state/drafts/20260822-120000-re-refund-request-XXXX.html
 size    876 B
 
 nothing has been sent. to send exactly this draft:
-    send-mail --commit 20260822-120000-re-refund-request-XXXX
+    send-mail commit 20260822-120000-re-refund-request-XXXX
 --- stderr

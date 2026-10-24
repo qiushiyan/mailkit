@@ -1,4 +1,4 @@
-$ send-mail --list
+$ send-mail list
 exit 0
 --- stdout
 20260822-120000-verbatim-XXXX                            gmail    pending                -> a@example.com

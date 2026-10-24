@@ -14,12 +14,12 @@ import (
 
 func TestSend_DraftClaimedByADeadProcessIsReportedUnknown(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "crash", "--body", "hello there", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "crash", "--body", "hello there", "--no-open")))
 	// A process that claimed the draft and died before recording an outcome.
 	if _, err := h.drafts().Claim(id); err != nil {
 		t.Fatal(err)
 	}
-	r := mustFail(t, h.send("--commit", id))
+	r := mustFail(t, h.send("commit", id))
 	if !strings.Contains(r.stderr, "unknown") || !strings.Contains(r.stderr, "crash") {
 		t.Fatalf("a draft left in sending must be reported as unknown, with the subject to search for: %s", r.stderr)
 	}
@@ -30,15 +30,15 @@ func TestSend_DraftClaimedByADeadProcessIsReportedUnknown(t *testing.T) {
 
 func TestSend_ProviderFailureAfterTransmissionIsUnknownNotPending(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "flaky", "--body", "hello there", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "flaky", "--body", "hello there", "--no-open")))
 	h.box.SendErr = errors.New("connection reset by peer")
-	mustFail(t, h.send("--commit", id))
+	mustFail(t, h.send("commit", id))
 	rec, _ := h.drafts().Load(id)
 	if rec.State != drafts.Unknown {
 		t.Fatalf("a failure once bytes may have left must be unknown, got %s", rec.State)
 	}
 	h.box.SendErr = nil
-	r := mustFail(t, h.send("--commit", id))
+	r := mustFail(t, h.send("commit", id))
 	if !strings.Contains(r.stderr, "unknown") || !strings.Contains(r.stderr, "flaky") {
 		t.Errorf("second commit must refuse and name the subject to check for: %s", r.stderr)
 	}
@@ -46,9 +46,9 @@ func TestSend_ProviderFailureAfterTransmissionIsUnknownNotPending(t *testing.T) 
 
 func TestSend_PreSendRefusalReturnsToPending(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "big", "--body", "hello there", "--no-open")))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "big", "--body", "hello there", "--no-open")))
 	h.box.SendLimit = 1
-	mustFail(t, h.send("--commit", id))
+	mustFail(t, h.send("commit", id))
 	if rec, _ := h.drafts().Load(id); rec.State != drafts.Pending {
 		t.Errorf("a refusal before transmission should return to pending, got %s", rec.State)
 	}
@@ -66,8 +66,8 @@ func TestSend_ReplyJoinsTheConversationItAnswers(t *testing.T) {
 	orig.MessageID = "CALag-refund@mail.example"
 	orig.References = []mail.MessageID{"first-ask@mail.example"}
 	h := newHarness(t, orig)
-	id := draftIDOf(t, mustOK(t, h.send("--reply", "liam", "--body", "The refund works for me, thanks.", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("reply", "liam", "--body", "The refund works for me, thanks.", "--no-open")))
+	mustOK(t, h.send("commit", id))
 
 	hdr, _, _ := parts(t, h.box.Sent[0])
 	if got := hdr.Get("In-Reply-To"); got != "<CALag-refund@mail.example>" {
@@ -96,8 +96,8 @@ func TestSend_ReplyJoinsTheConversationItAnswers(t *testing.T) {
 // at all. Gmail rewrote it on send and hid the defect.
 func TestSend_MessageIDIsOneMsgID(t *testing.T) {
 	h := newHarness(t)
-	id := draftIDOf(t, mustOK(t, h.send("--to", "a@example.com", "--subject", "id", "--body", "hello there", "--no-open")))
-	mustOK(t, h.send("--commit", id))
+	id := draftIDOf(t, mustOK(t, h.send("compose", "--to", "a@example.com", "--subject", "id", "--body", "hello there", "--no-open")))
+	mustOK(t, h.send("commit", id))
 	hdr, _, _ := parts(t, h.box.Sent[0])
 	got := hdr.Get("Message-ID")
 	if want := "<" + id + "@mailkit>"; got != want {

@@ -74,9 +74,19 @@ func TestSurface_ContextJSONCarriesTheHeldBackCommand(t *testing.T) {
 	}
 }
 
-func TestSurface_ErrorsNameTheSubcommand(t *testing.T) {
-	r := mustFail(t, newHarness(t).find("fetch", "nope"))
-	if !strings.HasPrefix(r.stderr, "mail-find fetch:") {
-		t.Errorf("the failing subcommand is the prefix: %s", r.stderr)
+// A fetch that names nothing to download is refused before the mailbox is
+// touched, and the refusal names both ways to choose and the page that
+// explains them.
+func TestSurface_FetchWithoutAChoiceNamesBothWays(t *testing.T) {
+	h := newHarness(t)
+	h.box.AuthErr = mail.ErrAuth
+	r := mustFail(t, h.find("fetch", "m1"))
+	for _, want := range []string{"--attachment", "--all", `"mail-find fetch --help"`} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("refusal lacks %s: %s", want, r.stderr)
+		}
+	}
+	if r.code != 2 || strings.Contains(r.stderr, "not authenticated") {
+		t.Errorf("an argv mistake is a usage error (exit 2) found before any account work; exit %d: %s", r.code, r.stderr)
 	}
 }

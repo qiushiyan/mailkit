@@ -2,4 +2,4 @@ $ mail-find fetch lunch --all
 exit 1
 --- stdout
 --- stderr
-mail-find fetch: message lunch has no attachments
+mail-find: error: message lunch has no attachments

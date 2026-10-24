@@ -1,5 +1,7 @@
-$ send-mail --list --to a@example.com
-exit 1
+$ send-mail list --to a@example.com
+exit 2
 --- stdout
 --- stderr
-send-mail: --list takes no other flags; drop --to
+send-mail: error: unknown flag --to
+Usage: send-mail list
+Run "send-mail list --help" for details.

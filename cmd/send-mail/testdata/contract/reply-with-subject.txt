@@ -1,5 +1,7 @@
-$ send-mail --reply liam --subject Keys --body hi
-exit 1
+$ send-mail reply liam --subject Keys --body hi
+exit 2
 --- stdout
 --- stderr
-send-mail: a reply's subject is the original's with "Re:" -- Gmail threads a reply only when the subjects match; drop --subject
+send-mail: error: unknown flag --subject
+Usage: send-mail reply (--body=BODY | --body-file=FILE) <id> [flags]
+Run "send-mail reply --help" for details.

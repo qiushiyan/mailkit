@@ -1,5 +1,5 @@
-$ send-mail --to a@example.com --subject log --body 'the error was <div>boom</div>' --no-open
+$ send-mail compose --to a@example.com --subject log --body 'the error was <div>boom</div>' --no-open
 exit 1
 --- stdout
 --- stderr
-send-mail: raw HTML cannot render the same in both parts of the message; write markdown, pass a finished HTML body with --format html, or send the bytes untouched with --format text
+send-mail: error: raw HTML cannot render the same in both parts of the message; write markdown, pass a finished HTML body with --format html, or send the bytes untouched with --format text

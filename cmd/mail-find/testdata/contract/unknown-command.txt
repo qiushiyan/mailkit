@@ -1,5 +1,7 @@
 $ mail-find bogus
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find: unknown command "bogus" for "mail-find"
+mail-find: error: unexpected argument bogus
+Usage: mail-find <command> [flags]
+Run "mail-find --help" for details.

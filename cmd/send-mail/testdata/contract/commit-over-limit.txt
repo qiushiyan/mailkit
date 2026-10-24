@@ -1,5 +1,5 @@
-$ send-mail --commit 20260822-120000-big-XXXX
+$ send-mail commit 20260822-120000-big-XXXX
 exit 1
 --- stdout
 --- stderr
-send-mail: message is 13.4 KB, over the 10.0 KB limit for gmail; send a share link instead
+send-mail: error: message is 13.4 KB, over the 10.0 KB limit for gmail; send a share link instead

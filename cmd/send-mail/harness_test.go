@@ -1,14 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/qiushiyan/mailkit/internal/cli"
+	"github.com/alecthomas/kong"
+	"github.com/qiushiyan/clikit"
+	"github.com/qiushiyan/clikit/clikittest"
 	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/mail"
@@ -61,15 +63,25 @@ type result struct {
 	stderr string
 }
 
+// app is the production App with the harness's stand-ins bound over the
+// real ones: Kong keeps one binding per type, and the later one wins.
+func (h *harness) app() clikit.App {
+	a := app
+	a.Stdin = strings.NewReader(h.stdin)
+	a.Options = append(slices.Clone(app.Options),
+		kong.BindTo(h.t.Context(), (*context.Context)(nil)),
+		kong.Bind(h.open),
+		kong.Bind(h.dirs),
+		kong.Bind(clock(func() time.Time { return now })),
+		kong.Bind(previewer(func(string) error { return nil })),
+	)
+	return a
+}
+
 func (h *harness) send(args ...string) result {
 	h.t.Helper()
-	var out, errOut bytes.Buffer
-	root := cli.SendMail(cli.Deps{
-		Open: h.open, Drafts: h.drafts(), Now: func() time.Time { return now }, Accounts: []string{"gmail", "outlook"},
-	}, &out, &errOut, strings.NewReader(h.stdin))
-	root.SetContext(h.t.Context())
-	code := cli.Run(root, args, &errOut)
-	return result{code, out.String(), errOut.String()}
+	r := clikittest.Run(h.app(), args...)
+	return result{r.Code, r.Stdout, r.Stderr}
 }
 
 func mustOK(t *testing.T, r result) result {

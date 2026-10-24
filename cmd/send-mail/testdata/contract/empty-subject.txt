@@ -1,0 +1,7 @@
+$ send-mail compose --to a@example.com --subject ' ' --body hi
+exit 2
+--- stdout
+--- stderr
+send-mail: error: --subject is empty; a message needs a subject
+Usage: send-mail compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE) [flags]
+Run "send-mail compose --help" for details.

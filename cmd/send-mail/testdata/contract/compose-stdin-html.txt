@@ -1,4 +1,4 @@
-$ send-mail --to a@example.com --subject html --body-file - --format html --no-open
+$ send-mail compose --to a@example.com --subject html --body-file - --format html --no-open
 exit 0
 --- stdout
 draft   20260822-120000-html-XXXX
@@ -7,5 +7,5 @@ preview $TMP/state/drafts/20260822-120000-html-XXXX.html
 size    279 B
 
 nothing has been sent. to send exactly this draft:
-    send-mail --commit 20260822-120000-html-XXXX
+    send-mail commit 20260822-120000-html-XXXX
 --- stderr

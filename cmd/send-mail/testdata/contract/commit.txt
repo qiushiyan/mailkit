@@ -1,4 +1,4 @@
-$ send-mail --commit 20260822-120000-invoice-august-XXXX
+$ send-mail commit 20260822-120000-invoice-august-XXXX
 exit 0
 --- stdout
 sent as me@example.com -> a@example.com, b@example.com

@@ -5,11 +5,8 @@ package wiring
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
-	"github.com/qiushiyan/mailkit/internal/cli"
-	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/gmail"
 	"github.com/qiushiyan/mailkit/internal/graph"
 	"github.com/qiushiyan/mailkit/internal/mail"
@@ -51,18 +48,5 @@ func Login(dirs paths.Dirs) func(ctx context.Context, account string, out func(s
 			return graph.Login(ctx, dirs.Config, out)
 		}
 		return fmt.Errorf("unknown account %q", account)
-	}
-}
-
-// Deps wires the production adapters.
-func Deps() cli.Deps {
-	dirs := paths.Default()
-	return cli.Deps{
-		Open:          Opener(dirs),
-		Login:         Login(dirs),
-		Drafts:        drafts.Store{Dir: dirs.Drafts()},
-		AttachmentDir: dirs.Attachments,
-		Accounts:      Accounts,
-		OpenPreview:   func(path string) error { return exec.Command("open", path).Start() },
 	}
 }

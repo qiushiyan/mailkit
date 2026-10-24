@@ -1,5 +1,7 @@
 $ mail-find read
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find read: accepts 1 arg(s), received 0
+mail-find: error: expected "<id>"
+Usage: mail-find read <id> [flags]
+Run "mail-find read --help" for details.

@@ -1,5 +1,7 @@
 $ send-mail --bogus
-exit 1
+exit 2
 --- stdout
 --- stderr
-send-mail: unknown flag: --bogus
+send-mail: error: unknown flag --bogus
+Usage: send-mail <command>
+Run "send-mail --help" for details.

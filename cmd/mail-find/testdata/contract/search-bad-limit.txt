@@ -1,5 +1,7 @@
 $ mail-find search lunch --limit x
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find search: invalid argument "x" for "--limit" flag: strconv.ParseInt: parsing "x": invalid syntax
+mail-find: error: --limit: expected a valid 64 bit int but got "x"
+Usage: mail-find search <query> [flags]
+Run "mail-find search --help" for details.

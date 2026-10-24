@@ -1,5 +1,7 @@
 $ mail-find fetch files
-exit 1
+exit 2
 --- stdout
 --- stderr
-mail-find fetch: pick attachments with --attachment NAME (repeatable) or --all
+mail-find: error: missing flags: --attachment=NAME or --all
+Usage: mail-find fetch (--attachment=NAME | --all) <id> [flags]
+Run "mail-find fetch --help" for details.

@@ -1,5 +1,7 @@
-$ send-mail --to a@example.com --subject x --body a --body-file $TMP/note.txt
-exit 1
+$ send-mail compose --to a@example.com --subject x --body a --body-file $TMP/note.txt
+exit 2
 --- stdout
 --- stderr
-send-mail: --body and --body-file are two sources for one body; use one
+send-mail: error: --body and --body-file can't be used together
+Usage: send-mail compose --to=ADDRESS,... --subject=SUBJECT (--body=BODY | --body-file=FILE) [flags]
+Run "send-mail compose --help" for details.

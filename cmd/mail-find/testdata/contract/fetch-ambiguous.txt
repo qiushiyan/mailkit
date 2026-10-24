@@ -2,4 +2,4 @@ $ mail-find fetch files --attachment report.pdf
 exit 1
 --- stdout
 --- stderr
-mail-find fetch: "report.pdf" names 2 attachments; pick one by handle: h2, h3
+mail-find: error: "report.pdf" names 2 attachments; pick one by handle: h2, h3

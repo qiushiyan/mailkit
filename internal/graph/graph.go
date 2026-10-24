@@ -52,13 +52,11 @@ const (
 type Mailbox struct {
 	Client  *http.Client // must add Authorization
 	BaseURL string       // https://graph.microsoft.com/v1.0
-	// LoginHint is the command that recovers from ErrAuth.
-	LoginHint string
 }
 
 // New builds a Mailbox over a client that already authenticates.
 func New(client *http.Client) *Mailbox {
-	return &Mailbox{Client: client, BaseURL: "https://graph.microsoft.com/v1.0", LoginHint: "mail-find auth login --account outlook"}
+	return &Mailbox{Client: client, BaseURL: "https://graph.microsoft.com/v1.0"}
 }
 
 type odataError struct {
@@ -121,7 +119,7 @@ func (m *Mailbox) do(ctx context.Context, method, path string, body io.Reader, c
 
 // wrap labels an error at the public boundary.
 func (m *Mailbox) wrap(op string, err error) error {
-	return mail.Wrap(providerName, op, m.LoginHint, err)
+	return mail.Wrap(providerName, op, mail.LoginCommand(providerName), err)
 }
 
 // --- wire shapes, hand-typed from the Graph reference ---------------------

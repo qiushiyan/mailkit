@@ -52,6 +52,14 @@ type Mailbox interface {
 	Send(ctx context.Context, p *Prepared, parent *Parent) (Sent, error)
 }
 
+// Opener returns the Mailbox for an account name. The composition root
+// wires the real adapters; tests wire memory.
+type Opener func(ctx context.Context, account string) (Mailbox, error)
+
+// LoginCommand is the command that signs account in again: the hint an
+// ErrAuth carries to whoever has to act on it.
+func LoginCommand(account string) string { return "mail-find auth login --account " + account }
+
 // Account is the address a Mailbox acts as, and the ceiling it sends under.
 type Account struct {
 	Address   string

@@ -34,7 +34,6 @@ import (
 
 	gomail "github.com/wneessen/go-mail"
 
-	"github.com/qiushiyan/mailkit/internal/attachments"
 	"github.com/qiushiyan/mailkit/internal/mail"
 )
 
@@ -148,9 +147,6 @@ func MarkdownBody(s string) Body { return Body{source: s, kind: bodyMarkdown} }
 // Store is a directory of drafts.
 type Store struct{ Dir string }
 
-// DefaultStore is under the state directory.
-func DefaultStore() Store { return Store{Dir: filepath.Join(attachments.StateDir(), "drafts")} }
-
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // Create builds the wire message and writes the draft. Nothing is sent.
@@ -183,7 +179,7 @@ func (s Store) Create(c Compose, now time.Time) (Record, *mail.Prepared, error) 
 		return Record{}, nil, errors.New("refusing to draft an empty body")
 	}
 	if c.From == "" {
-		return Record{}, nil, mail.Wrap(c.Account, "draft", "mail-find auth login --account "+c.Account, mail.ErrAuth)
+		return Record{}, nil, mail.Wrap(c.Account, "draft", mail.LoginCommand(c.Account), mail.ErrAuth)
 	}
 
 	m := gomail.NewMsg(gomail.WithNoDefaultUserAgent())

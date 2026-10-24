@@ -18,32 +18,21 @@ import (
 // Scopes are delegated: the app acts only as the signed-in user.
 var Scopes = []string{"https://graph.microsoft.com/Mail.Read", "https://graph.microsoft.com/Mail.Send"}
 
-// LoginHint is the command that fixes a missing token.
-const LoginHint = "mail-find auth login --account outlook"
-
-func configDir() string {
-	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "mailkit")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mailkit")
-}
-
-// Settings are the app registration; from the environment or the config
-// file `outlook.json` {"client_id":..., "tenant_id":...}.
+// Settings are the app registration; from the environment or the file
+// `outlook.json` {"client_id":..., "tenant_id":...} in the config directory.
 type Settings struct {
 	ClientID string `json:"client_id"`
 	TenantID string `json:"tenant_id"`
 }
 
-func loadSettings() (Settings, error) {
+func loadSettings(dir string) (Settings, error) {
 	s := Settings{ClientID: os.Getenv("MAILKIT_OUTLOOK_CLIENT_ID"), TenantID: os.Getenv("MAILKIT_OUTLOOK_TENANT_ID")}
 	if s.ClientID != "" && s.TenantID != "" {
 		return s, nil
 	}
-	b, err := os.ReadFile(filepath.Join(configDir(), "outlook.json"))
+	b, err := os.ReadFile(filepath.Join(dir, "outlook.json"))
 	if err != nil {
-		return s, fmt.Errorf("no Outlook app registration: write %s with client_id and tenant_id", filepath.Join(configDir(), "outlook.json"))
+		return s, fmt.Errorf("no Outlook app registration: write %s with client_id and tenant_id", filepath.Join(dir, "outlook.json"))
 	}
 	if err := unmarshal(b, &s); err != nil {
 		return s, err
@@ -51,8 +40,8 @@ func loadSettings() (Settings, error) {
 	return s, nil
 }
 
-func credential(interactive bool) (azcore.TokenCredential, azidentity.AuthenticationRecord, error) {
-	s, err := loadSettings()
+func credential(dir string, interactive bool) (azcore.TokenCredential, azidentity.AuthenticationRecord, error) {
+	s, err := loadSettings(dir)
 	if err != nil {
 		return nil, azidentity.AuthenticationRecord{}, err
 	}
@@ -61,7 +50,7 @@ func credential(interactive bool) (azcore.TokenCredential, azidentity.Authentica
 		return nil, azidentity.AuthenticationRecord{}, err
 	}
 	var rec azidentity.AuthenticationRecord
-	recPath := filepath.Join(configDir(), "outlook-record.json")
+	recPath := filepath.Join(dir, "outlook-record.json")
 	if b, err := os.ReadFile(recPath); err == nil {
 		_ = rec.UnmarshalJSON(b)
 	}
@@ -75,12 +64,13 @@ func credential(interactive bool) (azcore.TokenCredential, azidentity.Authentica
 	return cred, rec, err
 }
 
-// Client returns an HTTP client that adds a bearer token, or ErrAuth when
-// no cached token exists.
-func Client(ctx context.Context) (*http.Client, error) {
-	cred, _, err := credential(false)
+// Client returns an HTTP client that adds a bearer token, from the
+// registration and record in the config directory dir, or ErrAuth when no
+// cached token exists.
+func Client(ctx context.Context, dir string) (*http.Client, error) {
+	cred, _, err := credential(dir, false)
 	if err != nil {
-		return nil, mail.Wrap(providerName, "auth", LoginHint, err)
+		return nil, mail.Wrap(providerName, "auth", mail.LoginCommand(providerName), err)
 	}
 	return &http.Client{Transport: &bearer{cred: cred, next: http.DefaultTransport}}, nil
 }
@@ -100,10 +90,10 @@ func (b *bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.next.RoundTrip(r2)
 }
 
-// Login runs the device-code flow and stores the authentication record so
-// later runs are silent.
-func Login(ctx context.Context, out func(string)) error {
-	cred, _, err := credential(true)
+// Login runs the device-code flow and stores the authentication record in
+// the config directory dir, so later runs are silent.
+func Login(ctx context.Context, dir string, out func(string)) error {
+	cred, _, err := credential(dir, true)
 	if err != nil {
 		return err
 	}
@@ -119,10 +109,10 @@ func Login(ctx context.Context, out func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(configDir(), "outlook-record.json"), b, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "outlook-record.json"), b, 0o600); err != nil {
 		return err
 	}
 	out("Signed in as " + rec.Username)

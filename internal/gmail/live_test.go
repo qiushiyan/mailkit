@@ -18,6 +18,7 @@ import (
 	"github.com/qiushiyan/mailkit/internal/fixtures"
 	"github.com/qiushiyan/mailkit/internal/gmail"
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/paths"
 	"github.com/qiushiyan/mailkit/internal/render"
 )
 
@@ -29,7 +30,7 @@ var record = flag.Bool("record", false, "re-record testdata/gmail from the live 
 func liveBox(t *testing.T) *gmail.Mailbox {
 	t.Helper()
 	ctx := context.Background()
-	client, err := gmail.Client(ctx)
+	client, err := gmail.Client(ctx, paths.Default().Config)
 	if err != nil {
 		t.Skipf("no live credentials: %v", err)
 	}

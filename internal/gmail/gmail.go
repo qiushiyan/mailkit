@@ -36,8 +36,6 @@ const (
 // Mailbox is a Gmail account.
 type Mailbox struct {
 	svc *gm.Service
-	// LoginHint is the command that recovers from ErrAuth.
-	LoginHint string
 }
 
 // New builds a Mailbox over an authenticated HTTP client. opts may add an
@@ -47,7 +45,7 @@ func New(ctx context.Context, client *http.Client, opts ...option.ClientOption) 
 	if err != nil {
 		return nil, err
 	}
-	return &Mailbox{svc: svc, LoginHint: LoginHint}, nil
+	return &Mailbox{svc: svc}, nil
 }
 
 // unknownID turns Gmail's answer to an id it does not know -- 404 for a
@@ -68,7 +66,7 @@ func (m *Mailbox) wrap(op string, err error) error {
 			err = base
 		}
 	}
-	return mail.Wrap(providerName, op, m.LoginHint, err)
+	return mail.Wrap(providerName, op, mail.LoginCommand(providerName), err)
 }
 
 func (m *Mailbox) Account(ctx context.Context) (mail.Account, error) {

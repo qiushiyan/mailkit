@@ -24,19 +24,16 @@ import (
 	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/images"
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/paths"
 	"github.com/qiushiyan/mailkit/internal/render"
 )
-
-// Opener returns the Mailbox for an account name. The composition root
-// wires the real adapters; tests wire memory.
-type Opener func(ctx context.Context, account string) (mail.Mailbox, error)
 
 // Login runs a provider's interactive sign-in.
 type Login func(ctx context.Context, account string, out func(string)) error
 
 // Deps is everything the commands reach outside themselves.
 type Deps struct {
-	Open   Opener
+	Open   mail.Opener
 	Login  Login
 	Images *images.Fetcher
 	Drafts drafts.Store
@@ -53,7 +50,7 @@ func (d *Deps) defaults() {
 		d.Images = images.Default
 	}
 	if d.AttachmentDir == nil {
-		d.AttachmentDir = attachments.DefaultDir
+		d.AttachmentDir = paths.Default().Attachments
 	}
 	if d.Now == nil {
 		d.Now = time.Now

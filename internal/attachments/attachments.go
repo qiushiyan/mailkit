@@ -1,8 +1,8 @@
-// Package attachments owns where downloaded bytes land and what they are
-// called. Names come from someone else's mail, so they are sanitised
-// exactly once, here; every path written is inside the directory asked for;
-// and two parts that would collide get distinct names before any file is
-// opened.
+// Package attachments owns what downloaded bytes are called. Names come
+// from someone else's mail, so they are sanitised exactly once, here; every
+// path written is inside the directory asked for; and two parts that would
+// collide get distinct names before any file is opened. Which directory
+// that is by default belongs to internal/paths.
 package attachments
 
 import (
@@ -62,20 +62,4 @@ func Allocate(dir string, names []string) ([]string, error) {
 func exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
-}
-
-// DefaultDir is where downloads land when the caller names nowhere: under
-// the state directory, never the cwd, so an agent cannot litter whatever
-// directory it happens to be standing in.
-func DefaultDir(messageID string) string {
-	return filepath.Join(StateDir(), "attachments", Safe(messageID, "message"))
-}
-
-// StateDir is $XDG_STATE_HOME/mailkit or ~/.local/state/mailkit.
-func StateDir() string {
-	if x := os.Getenv("XDG_STATE_HOME"); x != "" {
-		return filepath.Join(x, "mailkit")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "mailkit")
 }

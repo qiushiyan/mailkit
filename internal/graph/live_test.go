@@ -16,6 +16,7 @@ import (
 	"github.com/qiushiyan/mailkit/internal/drafts"
 	"github.com/qiushiyan/mailkit/internal/graph"
 	"github.com/qiushiyan/mailkit/internal/mail"
+	"github.com/qiushiyan/mailkit/internal/paths"
 	"github.com/qiushiyan/mailkit/internal/render"
 )
 
@@ -30,7 +31,7 @@ var record = flag.Bool("record", false, "re-record testdata/graph from the live 
 
 func liveBox(t *testing.T) *graph.Mailbox {
 	t.Helper()
-	client, err := graph.Client(context.Background())
+	client, err := graph.Client(context.Background(), paths.Default().Config)
 	if err != nil {
 		t.Skipf("no live credentials: %v", err)
 	}

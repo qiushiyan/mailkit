@@ -296,5 +296,5 @@ func readBody(file, inline string, stdin io.Reader) (string, error) {
 // authHint attaches the login command to a not-authenticated error that
 // reached the CLI without one; an adapter's own hint passes through.
 func (a *app) authHint(err error) error {
-	return mail.Wrap(a.account, "account", "mail-find auth login --account "+a.account, err)
+	return mail.Wrap(a.account, "account", mail.LoginCommand(a.account), err)
 }

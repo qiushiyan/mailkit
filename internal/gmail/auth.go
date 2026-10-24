@@ -26,48 +26,38 @@ var Scopes = []string{
 	"https://www.googleapis.com/auth/gmail.send",
 }
 
-// Paths of the self-owned OAuth client and the token it yields. gcloud's
-// application-default client is blocked from Gmail's restricted scopes, so
-// a self-owned client is the only route.
-func ConfigDir() string {
-	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "mailkit")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mailkit")
-}
+// Paths of the self-owned OAuth client and the token it yields, under the
+// config directory. gcloud's application-default client is blocked from
+// Gmail's restricted scopes, so a self-owned client is the only route.
+func clientSecretPath(dir string) string { return filepath.Join(dir, "gmail-client.json") }
+func tokenPath(dir string) string        { return filepath.Join(dir, "gmail-token.json") }
 
-func ClientSecretPath() string { return filepath.Join(ConfigDir(), "gmail-client.json") }
-func TokenPath() string        { return filepath.Join(ConfigDir(), "gmail-token.json") }
-
-// LoginHint is the command that fixes a missing or dead token.
-const LoginHint = "mail-find auth login"
-
-func loadConfig() (*oauth2.Config, error) {
-	b, err := os.ReadFile(ClientSecretPath())
+func loadConfig(dir string) (*oauth2.Config, error) {
+	b, err := os.ReadFile(clientSecretPath(dir))
 	if err != nil {
-		return nil, fmt.Errorf("no OAuth client at %s: copy the Desktop-app client_secret.json there", ClientSecretPath())
+		return nil, fmt.Errorf("no OAuth client at %s: copy the Desktop-app client_secret.json there", clientSecretPath(dir))
 	}
 	return google.ConfigFromJSON(b, Scopes...)
 }
 
-// Client returns an authenticated HTTP client, or ErrAuth with the login
-// command when no usable token exists.
-func Client(ctx context.Context) (*http.Client, error) {
-	cfg, err := loadConfig()
+// Client returns an HTTP client authenticated from the config directory
+// dir, or ErrAuth with the login command when no usable token exists.
+func Client(ctx context.Context, dir string) (*http.Client, error) {
+	hint := mail.LoginCommand(providerName)
+	cfg, err := loadConfig(dir)
 	if err != nil {
-		return nil, mail.Wrap(providerName, "auth", LoginHint, err)
+		return nil, mail.Wrap(providerName, "auth", hint, err)
 	}
-	b, err := os.ReadFile(TokenPath())
+	b, err := os.ReadFile(tokenPath(dir))
 	if err != nil {
-		return nil, mail.Wrap(providerName, "auth", LoginHint, mail.ErrAuth)
+		return nil, mail.Wrap(providerName, "auth", hint, mail.ErrAuth)
 	}
 	var tok oauth2.Token
 	if err := json.Unmarshal(b, &tok); err != nil {
-		return nil, mail.Wrap(providerName, "auth", LoginHint, mail.ErrAuth)
+		return nil, mail.Wrap(providerName, "auth", hint, mail.ErrAuth)
 	}
 	src := cfg.TokenSource(ctx, &tok)
-	return oauth2.NewClient(ctx, &savingSource{src: src, path: TokenPath()}), nil
+	return oauth2.NewClient(ctx, &savingSource{src: src, path: tokenPath(dir)}), nil
 }
 
 // savingSource writes refreshed tokens back so a refresh survives the process.
@@ -101,9 +91,9 @@ func saveToken(path string, t *oauth2.Token) error {
 }
 
 // Login runs the browser OAuth flow on a loopback redirect and stores the
-// token. It is the one interactive step.
-func Login(ctx context.Context, out func(string)) error {
-	cfg, err := loadConfig()
+// token under the config directory dir. It is the one interactive step.
+func Login(ctx context.Context, dir string, out func(string)) error {
+	cfg, err := loadConfig(dir)
 	if err != nil {
 		return err
 	}
@@ -143,10 +133,10 @@ func Login(ctx context.Context, out func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := saveToken(TokenPath(), tok); err != nil {
+	if err := saveToken(tokenPath(dir), tok); err != nil {
 		return err
 	}
-	out("Token saved to " + TokenPath())
+	out("Token saved to " + tokenPath(dir))
 	return nil
 }
 

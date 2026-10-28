@@ -1,6 +1,6 @@
 ---
 name: read-email
-description: "Read the user's mail with the mail-find CLI — find messages by sender, subject, date or phrase; read one in full incl. attachments and the pictures it links to; reassemble a thread or everything about one order/booking/tenancy across senders; turn a Message-ID or message:// link into a message."
+description: "Read the user's mail with the mail-find CLI. Use when the user asks for a message, its attachments, a thread, or everything about one order, or a message:// link arrives."
 ---
 
 # Read email with `mail-find`
